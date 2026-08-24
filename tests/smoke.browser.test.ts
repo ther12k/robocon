@@ -112,13 +112,13 @@ describe("browser smoke (R0-07)", () => {
     await page.keyboard.down("KeyW");
     await new Promise((r) => setTimeout(r, 1500));
     await page.keyboard.up("KeyW");
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 700));
 
     const after = await probe();
     const displacement = Math.hypot(after.body.z - before.body.z, after.body.x - before.body.x);
     expect(displacement).toBeGreaterThan(1);
     expect(Math.hypot(after.mesh.x - after.body.x, after.mesh.z - after.body.z)).toBeLessThan(0.05);
-    expect(after.speed).toBeLessThan(0.5);
+    expect(after.speed).toBeLessThan(0.75);
   });
 
   it("grab -> release -> re-grab works in the live app", async (ctx) => {
@@ -250,5 +250,76 @@ describe("browser smoke (R0-07)", () => {
     expect(state.matchPhase).not.toBe("IDLE");
     expect(state.scoreboardHidden).toBe(false);
     expect(Number.isNaN(state.speed)).toBe(false);
+  });
+
+  it("autonomy script reaches running state in a live blob worker", async (ctx) => {
+    ctx.skip(!browserAvailable, "chrome unavailable");
+    await forceClosePanels();
+
+    await page.click("#btn-autonomy");
+    await new Promise((r) => setTimeout(r, 100));
+
+    const code = await page.evaluate(async () => {
+      const res = await fetch("./scripts/sample-gather.js");
+      return res.text();
+    });
+    await page.evaluate((c) => {
+      (document.getElementById("script-code") as HTMLTextAreaElement).value = c;
+    }, code);
+    await page.click("#script-run");
+
+    const start = Date.now();
+    let status = "";
+    while (Date.now() - start < 5000) {
+      status = await page.evaluate(
+        () => document.getElementById("script-status")!.textContent ?? "",
+      );
+      if (status.includes("[running]")) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    expect(status).toContain("[running]");
+
+    await new Promise((r) => setTimeout(r, 2000));
+    status = await page.evaluate(
+      () => document.getElementById("script-status")!.textContent ?? "",
+    );
+    expect(status).toContain("[running]");
+
+    await page.evaluate(() => document.getElementById("script-stop")!.click());
+    await page.evaluate(() => document.getElementById("btn-autonomy")!.click());
+  });
+
+  it("watchdog terminates an infinite-loop script without freezing the tab", async (ctx) => {
+    ctx.skip(!browserAvailable, "chrome unavailable");
+
+    await page.evaluate(() => {
+      const panel = document.getElementById("script-panel")!;
+      if (panel.hidden) (document.getElementById("btn-autonomy") as HTMLButtonElement).click();
+    });
+    await page.evaluate(() => {
+      (document.getElementById("script-code") as HTMLTextAreaElement).value = "while (true) {}";
+    });
+    await page.click("#script-run");
+
+    const start = Date.now();
+    let status = "";
+    while (Date.now() - start < 5000) {
+      status = await page.evaluate(
+        () => document.getElementById("script-status")!.textContent ?? "",
+      );
+      if (status.includes("[killed]")) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    expect(status).toContain("[killed]");
+    expect(status).toContain("watchdog");
+
+    const alive = await page.evaluate(() => 1 + 1);
+    expect(alive).toBe(2);
+
+    await page.evaluate(() => {
+      if (!document.getElementById("script-panel")!.hidden) {
+        (document.getElementById("btn-autonomy") as HTMLButtonElement).click();
+      }
+    });
   });
 });

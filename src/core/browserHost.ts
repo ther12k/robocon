@@ -2,6 +2,7 @@ import type { HostFactory, ScriptHost, WorkerIn, WorkerOut } from "./autonomy";
 
 const WRAPPER_SOURCE = String.raw`
 let userTick = null;
+let userApi = null;
 let slot = 0;
 function send(msg) { self.postMessage(msg); }
 self.onmessage = (e) => {
@@ -9,7 +10,7 @@ self.onmessage = (e) => {
   if (msg.type === "init") {
     slot = msg.slot ?? 0;
     try {
-      const api = {
+      userApi = {
         setAxes(fwd, strafe, turn) { send({ type: "axes", slot, payload: { fwd, strafe, turn } }); },
         grabToggle() { send({ type: "grabToggle", slot }); },
         release() { send({ type: "release", slot }); },
@@ -30,7 +31,7 @@ self.onmessage = (e) => {
     send({ type: "heartbeat", tick: msg.sense ? msg.sense.tick : -1 });
     if (!userTick || !msg.sense) return;
     try {
-      userTick(msg.sense, api);
+      userTick(msg.sense, userApi);
     } catch (err) {
       send({ type: "error", message: "onTick: " + err.message });
     }
