@@ -45,9 +45,13 @@ function newTwoRobotCore(): SimulationCore {
   return core;
 }
 
-function recordRandomSession(seed: number, checkpointInterval: number): ReplayFile {
+function recordRandomSession(
+  seed: number,
+  checkpointInterval: number,
+  onto?: SimulationCore,
+): ReplayFile {
   const rng = mulberry32(seed);
-  const core = newTwoRobotCore();
+  const core = onto ?? newTwoRobotCore();
   core.beginReplayCapture(checkpointInterval);
   for (let t = 0; t < TICKS; t++) {
     const step = randomStep(rng);
@@ -115,6 +119,27 @@ describe("determinism fuzz (seeded)", () => {
       const rerecorded = recordRandomSession(seed, interval);
       expect(rerecorded.commands, `seed ${seed} stream drift`).toEqual(file.commands);
       expect(rerecorded.finalStateHash).toBe(file.finalStateHash);
+    }
+  });
+
+  it("survives five record/playback cycles on one core without drift or leaks", async () => {
+    await RAPIER.init();
+    const core = newTwoRobotCore();
+    for (let cycle = 0; cycle < 5; cycle++) {
+      core.resetForReplay();
+      const file = recordRandomSession(100 + cycle, 20 + cycle * 5, core);
+
+      expect(core.startReplayPlayback(file), `cycle ${cycle} rejected`).toEqual([]);
+      drivePlayback(core, file, (i) => 0.5 + ((i * 104729) % 4));
+      expect(core.isReplayPlaybackActive(), `cycle ${cycle} never completed`).toBe(false);
+      expect(core.wasReplayPlaybackCompleted(), `cycle ${cycle} incomplete`).toBe(true);
+      expect(core.replayDesync, `cycle ${cycle} desync @${core.replayDesync}`).toBeNull();
+      expect(core.stateHash(), `cycle ${cycle} drift`).toBe(file.finalStateHash);
+
+      const pristine = newTwoRobotCore();
+      expect(pristine.startReplayPlayback(file)).toEqual([]);
+      drivePlayback(pristine, file, () => 1);
+      expect(pristine.stateHash(), `cycle ${cycle} cross-core drift`).toBe(file.finalStateHash);
     }
   });
 });

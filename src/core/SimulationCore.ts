@@ -89,6 +89,7 @@ export class SimulationCore {
   private replayTotalTicks = 0;
   private replayCompleted = false;
   private replayDesyncTick: number | null = null;
+  private sessionId = 0;
 
   constructor(arena: ArenaConfig, competition: CompetitionRuleset, profile: SimulationProfile) {
     this.arena = arena;
@@ -100,6 +101,7 @@ export class SimulationCore {
   }
 
   private buildSession(): PhysicsWorld {
+    this.sessionId += 1;
     const physics = new PhysicsWorld({ x: 0, y: -9.81, z: 0 });
     if (this.profile.solverHz && this.profile.solverHz !== 60) {
       (physics as { fixedDt: number }).fixedDt = 1 / this.profile.solverHz;
@@ -266,7 +268,9 @@ export class SimulationCore {
   }
 
   advance(frameDt: number): void {
+    const session = this.sessionId;
     this.physics.advance(frameDt, (dt) => {
+      if (session !== this.sessionId) return false;
       const halt = this.onFixedTick();
       for (const fn of this.postStepListeners) fn(dt);
       return halt;
@@ -378,11 +382,13 @@ export class SimulationCore {
     const oldWorld = this.physics.world;
     this.buildSession();
     for (const [id, mesh] of meshes) this.physics.attachMesh(id, mesh);
-    try {
-      oldWorld.free();
-    } catch {
-      // world.free() is unavailable on some Rapier builds; GC will reclaim
-    }
+    queueMicrotask(() => {
+      try {
+        oldWorld.free();
+      } catch {
+        // world.free() is unavailable on some Rapier builds; GC will reclaim
+      }
+    });
     for (const st of this.triggers.values()) st.inside = new Set();
     this.pendingEvents = [];
     this.replayCmds = null;

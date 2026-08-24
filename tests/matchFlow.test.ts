@@ -152,16 +152,15 @@ describe("MatchController phases (M3)", () => {
     tickUntil(match, 2.2);
     expect(match.phase).toBe("playing");
 
-    const body = core.getBody(0)!;
-    body.setTranslation({ x: 9.5, y: 0.2, z: 0 }, true);
+    core.getBody(0)!.setTranslation({ x: 9.5, y: 0.2, z: 0 }, true);
     for (let i = 0; i < 5; i++) match.advance(core.physics.fixedDt);
 
-    const p = body.translation();
+    const p = core.getBody(0)!.translation();
     expect(p.x).toBeCloseTo(-7, 1);
     expect(match.retriesFor("red")).toBe(0);
     expect(match.entries.filter((e) => e.ruleId.startsWith("oob"))).toHaveLength(2);
 
-    body.setTranslation({ x: 9.5, y: 0.2, z: 0 }, true);
+    core.getBody(0)!.setTranslation({ x: 9.5, y: 0.2, z: 0 }, true);
     for (let i = 0; i < 5; i++) match.advance(core.physics.fixedDt);
     expect(match.winner).toBe("blue");
     expect(match.phase).toBe("ended");

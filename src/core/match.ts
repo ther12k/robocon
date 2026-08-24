@@ -80,7 +80,7 @@ export class MatchController {
     this.log = [];
     this.scoredKeys.clear();
     this.matchTick = 0;
-    this.core.resetRobotsToSpawns();
+    this.core.resetForReplay();
     this.core.inputGateEnabled = true;
     this.setPhase("setup", match.setupSec, `Match started — setup ${match.setupSec}s`);
   }
@@ -228,10 +228,10 @@ export class MatchController {
             ruleId: rule.id,
             message: `${team} robot out of bounds`,
           });
-          if (rule.effect === "retry") {
-            if (this.retriesLeft[team] > 0) {
-              this.retriesLeft[team] -= 1;
-              this.core.resetRobotsToSpawns();
+           if (rule.effect === "retry") {
+             if (this.retriesLeft[team] > 0) {
+               this.retriesLeft[team] -= 1;
+               this.core.resetForReplay();
               this.log.push({
                 tick: this.matchTick,
                 timeSec: round2(this.timeElapsedSec()),
