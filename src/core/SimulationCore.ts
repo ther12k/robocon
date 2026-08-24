@@ -14,7 +14,6 @@ import {
   type ReplayFile,
   type ReplayRuntimeInfo,
 } from "./replayFile";
-import { quatFromEulerYXZ } from "../sim/orientation";
 
 export const ENGINE_VERSION = "0.1.0";
 
@@ -58,11 +57,6 @@ interface Slot {
   spawn: { x: number; z: number; yaw: number };
 }
 
-interface ObjectSpawnSnapshot {
-  p: { x: number; y: number; z: number };
-  q: { x: number; y: number; z: number; w: number };
-}
-
 interface TriggerState {
   inside: Set<string>;
 }
@@ -76,7 +70,6 @@ export class SimulationCore {
   private slots = new Map<number, Slot>();
   private worldObjects: GrabCandidate[] = [];
   private objectEntityIds = new Map<number, string>();
-  private objectSpawns = new Map<number, ObjectSpawnSnapshot>();
   private triggers = new Map<string, TriggerState>();
   private pendingEvents: SimEvent[] = [];
   private tick = 0;
@@ -104,24 +97,18 @@ export class SimulationCore {
     this.sessionId += 1;
     const physics = new PhysicsWorld({ x: 0, y: -9.81, z: 0 });
     if (this.profile.solverHz && this.profile.solverHz !== 60) {
-      (physics as { fixedDt: number }).fixedDt = 1 / this.profile.solverHz;
-      physics.world.timestep = physics.fixedDt;
+      physics.setSolverHz(this.profile.solverHz);
     }
     this.physics = physics;
     physics.buildStaticFromArena(this.arena);
     this.worldObjects = [];
     this.objectEntityIds = new Map();
-    this.objectSpawns = new Map();
     for (const spawn of this.arena.objectSpawns) {
       const obj = physics.addDynamicObject(spawn, this.arena.surfaces.defaultFriction);
       const entityId = `obj-${spawn.objectId}`;
       physics.registerEntity(entityId, obj.body);
       this.worldObjects.push({ id: spawn.objectId, body: obj.body, collider: obj.collider });
       this.objectEntityIds.set(obj.collider.handle, entityId);
-      this.objectSpawns.set(obj.collider.handle, {
-        p: { x: spawn.pose.x, y: spawn.pose.y, z: spawn.pose.z },
-        q: { x: 0, y: 0, z: 0, w: 1 },
-      });
     }
     this._ownership = new OwnershipRegistry();
     for (const [index, slot] of this.slots) {
@@ -346,34 +333,6 @@ export class SimulationCore {
     timeRemainingSec: number;
     scores: { red: number; blue: number };
   };
-
-  resetRobotsToSpawns(): void {
-    for (const [, slot] of this.slots) {
-      slot.gripper?.release(slot.body.linvel());
-      const q = quatFromEulerYXZ(0, slot.spawn.yaw, 0);
-      slot.body.setTranslation(
-        { x: slot.spawn.x, y: (slot.spec.chassis.height ?? 0.3) / 2 + 0.02, z: slot.spawn.z },
-        true,
-      );
-      slot.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
-      slot.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      slot.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      slot.axes = { fwd: 0, strafe: 0, turn: 0 };
-    }
-  }
-
-  resetObjectsToSpawns(): void {
-    for (const o of this.worldObjects) {
-      if (this.ownershipRef.isHeld(o.collider.handle)) continue;
-      const spawn = this.objectSpawns.get(o.collider.handle);
-      if (!spawn) continue;
-      o.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-      o.body.setTranslation(spawn.p, true);
-      o.body.setRotation(spawn.q, true);
-      o.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      o.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    }
-  }
 
   resetForReplay(): void {
     const meshes = new Map<string, NonNullable<TrackedEntity["mesh"]>>();

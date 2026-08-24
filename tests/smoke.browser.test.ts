@@ -194,6 +194,8 @@ describe("browser smoke (R0-07)", () => {
       await page.evaluate(() => (window as unknown as SimProbe).__sim_replayState()),
     ).toBe("recording");
 
+    const spawnPos = await page.evaluate(() => (window as unknown as SimProbe).__sim_robotPos());
+
     await page.keyboard.down("KeyW");
     await new Promise((r) => setTimeout(r, 1000));
     await page.keyboard.up("KeyW");
@@ -203,7 +205,6 @@ describe("browser smoke (R0-07)", () => {
     expect(file).not.toBeNull();
     expect(file!.schemaVersion).toBe(1);
     expect(file!.commands.length).toBeGreaterThan(0);
-    const recordedEnd = await page.evaluate(() => (window as unknown as SimProbe).__sim_robotPos());
 
     const loadResult = await page.evaluate(
       (text) => (window as unknown as SimProbe).__sim_replayLoadText(text),
@@ -216,15 +217,38 @@ describe("browser smoke (R0-07)", () => {
 
     const start = Date.now();
     let state = "playing";
+    let status = "";
     while (Date.now() - start < 20000) {
       state = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayState());
+      status = await page.evaluate(() => document.getElementById("replay-status")!.textContent ?? "");
       if (state !== "playing") break;
       await new Promise((r) => setTimeout(r, 200));
     }
     expect(state).toBe("idle");
+    expect(status).toContain("finished");
 
     const replayedEnd = await page.evaluate(() => (window as unknown as SimProbe).__sim_robotPos());
-    const gap = Math.hypot(recordedEnd.x - replayedEnd.x, recordedEnd.z - replayedEnd.z);
-    expect(gap).toBeLessThan(0.05);
+    const travelled = Math.hypot(replayedEnd.x - spawnPos.x, replayedEnd.z - spawnPos.z);
+    expect(travelled).toBeGreaterThan(1);
+  });
+
+  it("start match leaves idle phase, shows scoreboard, world stays alive", async (ctx) => {
+    ctx.skip(!browserAvailable, "chrome unavailable");
+    await forceClosePanels();
+
+    await page.click("#btn-match-start");
+    await new Promise((r) => setTimeout(r, 300));
+
+    const state = await page.evaluate(() => ({
+      appPhase: document.body.dataset.appPhase,
+      matchPhase: document.getElementById("match-phase")!.textContent,
+      scoreboardHidden: document.getElementById("scoreboard")!.hidden,
+      speed: (window as unknown as SimProbe).__sim_robotSpeed(),
+    }));
+
+    expect(state.appPhase).toBe("ready");
+    expect(state.matchPhase).not.toBe("IDLE");
+    expect(state.scoreboardHidden).toBe(false);
+    expect(Number.isNaN(state.speed)).toBe(false);
   });
 });

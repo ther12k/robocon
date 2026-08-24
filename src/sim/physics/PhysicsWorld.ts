@@ -42,12 +42,18 @@ export function disposeObjectDeep(root: THREE.Object3D): void {
 
 export class PhysicsWorld {
   readonly world: RAPIER.World;
-  readonly fixedDt = 1 / 60;
+  fixedDt = 1 / 60;
   private accumulator = 0;
   private entities = new Map<string, TrackedEntity>();
 
   constructor(gravity = { x: 0, y: -9.81, z: 0 }) {
     this.world = new RAPIER.World(gravity);
+    this.world.timestep = this.fixedDt;
+  }
+
+  setSolverHz(hz: number): void {
+    if (hz <= 0) return;
+    this.fixedDt = 1 / hz;
     this.world.timestep = this.fixedDt;
   }
 
