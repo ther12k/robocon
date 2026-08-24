@@ -51,7 +51,7 @@ function replay(commands: ReturnType<SimulationCore["bus"]["recordedCommands"]>,
   for (let tick = 0; tick < totalTicks; tick++) {
     core.bus.setTick(tick);
     for (const c of byTick.get(tick) ?? []) {
-      core.busReplayInject(c.action);
+      core.injectCommand(c.action);
     }
     core.advance(core.physics.fixedDt);
   }

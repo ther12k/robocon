@@ -684,47 +684,52 @@ async function main(): Promise<void> {
 
   function loop(): void {
     requestAnimationFrame(loop);
-    const dt = clock.getDelta();
+    try {
+      const dt = clock.getDelta();
 
-    while (input.consumeTabPress()) setActiveSlot(activeSlot + 1);
+      while (input.consumeTabPress()) setActiveSlot(activeSlot + 1);
 
-    const cmd = input.readCommand();
-    if (replayUi !== "playing" && core?.hasSlot(activeSlot)) {
-      core.setAxesFromInput(activeSlot, cmd);
-      const gripDown = input.isDown("Space");
-      if (gripDown && !prevGripDown) core.enqueueGrabToggle(activeSlot);
-      prevGripDown = gripDown;
-    }
-
-    if (match) {
-      match.advance(dt);
-    } else {
-      core!.advance(dt);
-    }
-
-    if (replayUi === "playing" && core && !core.isReplayPlaybackActive()) {
-      const desync = core.replayDesync;
-      if (desync !== null) {
-        finishPlayback(`aborted — state diverged from checkpoint at tick ${desync}`, "err");
-      } else {
-        finishPlayback(core.wasReplayPlaybackCompleted() ? "finished" : "stopped");
+      const cmd = input.readCommand();
+      if (replayUi !== "playing" && core?.hasSlot(activeSlot)) {
+        core.setAxesFromInput(activeSlot, cmd);
+        const gripDown = input.isDown("Space");
+        if (gripDown && !prevGripDown) core.enqueueGrabToggle(activeSlot);
+        prevGripDown = gripDown;
       }
-    }
 
-    rig!.update(dt);
-    renderer.render(scene, rig!.camera);
+      if (match) {
+        match.advance(dt);
+      } else {
+        core!.advance(dt);
+      }
 
-    frames += 1;
-    fpsAccum += dt;
-    if (fpsAccum >= 0.5) {
-      fpsEl.textContent = `${Math.round(frames / fpsAccum)} fps`;
-      frames = 0;
-      fpsAccum = 0;
-    }
-    updateRobotPanel();
-    updateScoreboard();
-    if (autonomy && !scriptPanel.hidden) {
-      setScriptStatus(autonomy.status(activeSlot));
+      if (replayUi === "playing" && core && !core.isReplayPlaybackActive()) {
+        const desync = core.replayDesync;
+        if (desync !== null) {
+          finishPlayback(`aborted — state diverged from checkpoint at tick ${desync}`, "err");
+        } else {
+          finishPlayback(core.wasReplayPlaybackCompleted() ? "finished" : "stopped");
+        }
+      }
+
+      rig!.update(dt);
+      renderer.render(scene, rig!.camera);
+
+      frames += 1;
+      fpsAccum += dt;
+      if (fpsAccum >= 0.5) {
+        fpsEl.textContent = `${Math.round(frames / fpsAccum)} fps`;
+        frames = 0;
+        fpsAccum = 0;
+      }
+      updateRobotPanel();
+      updateScoreboard();
+      if (autonomy && !scriptPanel.hidden) {
+        setScriptStatus(autonomy.status(activeSlot));
+      }
+    } catch (err) {
+      console.error(err);
+      setPhase("failed", err instanceof Error ? err.message : String(err));
     }
   }
 

@@ -229,7 +229,8 @@ export class SimulationCore {
     this.bus.enqueue({ kind: "grabToggle", slot }, { tick: this.tick });
   }
 
-  busReplayInject(action: Parameters<CommandBus["enqueue"]>[0]): void {
+  /** Injects an external command (autonomy scripts, tooling) through the gate. */
+  injectCommand(action: CommandAction): void {
     this.bus.inject(action);
   }
 

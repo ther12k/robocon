@@ -54,7 +54,7 @@ function replayCommands(core: SimulationCore, commands: ReplayFile["commands"], 
   }
   for (let tick = 0; tick < totalTicks; tick++) {
     core.bus.setTick(tick);
-    for (const c of byTick.get(tick) ?? []) core.busReplayInject(c.action);
+    for (const c of byTick.get(tick) ?? []) core.injectCommand(c.action);
     core.advance(core.physics.fixedDt);
   }
 }
@@ -229,6 +229,59 @@ describe("versioned replay files (R1-06)", () => {
     expect(replayMatch.entries.map((e) => [e.tick, e.kind, e.team ?? "", e.ruleId])).toEqual(
       recordedEntries,
     );
+  });
+
+  it("captures externally injected commands (autonomy releases) and replays them", async () => {
+    await RAPIER.init();
+    const core = newCore();
+    core.beginReplayCapture(30);
+
+    let grabbed = false;
+    let tick = 0;
+    for (; tick < 300 && !grabbed; tick++) {
+      const body = core.getBody(0)!;
+      const p = body.translation();
+      const r = body.rotation();
+      const yaw = Math.atan2(2 * (r.w * r.y + r.x * r.z), 1 - 2 * (r.y * r.y + r.x * r.x));
+      const objT = core.worldObjectCandidates()[0].body.translation();
+      const dx = objT.x - p.x;
+      const dz = objT.z - p.z;
+      const desiredYaw = Math.atan2(dx, dz);
+      let err = desiredYaw - yaw;
+      while (err > Math.PI) err -= 2 * Math.PI;
+      while (err < -Math.PI) err += 2 * Math.PI;
+      const turn = Math.max(-1, Math.min(1, err * 2));
+      const dist = Math.hypot(dx, dz);
+      const fwd = Math.abs(err) < 0.5 ? 1 : 0.15;
+      core.setAxesFromInput(0, { fwd, strafe: 0, turn });
+      if (dist < 0.9 && tick % 13 === 5) core.enqueueGrabToggle(0);
+      core.advance(core.physics.fixedDt);
+      grabbed = core.gripStatus(0).holding;
+    }
+    expect(grabbed, "closed-loop bot failed to grab").toBe(true);
+
+    for (let t = 0; t < 25; t++) {
+      core.setAxesFromInput(0, { fwd: -1, strafe: 0, turn: 0 });
+      core.advance(core.physics.fixedDt);
+    }
+    core.injectCommand({ kind: "release", slot: 0 });
+    core.advance(core.physics.fixedDt);
+    expect(core.gripStatus(0).holding).toBe(false);
+
+    const file = core.endReplayCapture();
+    expect(file.commands.some((c) => c.action.kind === "release")).toBe(true);
+    expect(file.finalStateHash).not.toBe(file.initialStateHash);
+
+    const target = newCore();
+    expect(target.startReplayPlayback(file)).toEqual([]);
+    let guard = 0;
+    while (target.isReplayPlaybackActive() && guard++ < file.totalTicks * 3) {
+      target.advance(file.fixedDt);
+    }
+    expect(target.wasReplayPlaybackCompleted()).toBe(true);
+    expect(target.replayDesync).toBeNull();
+    expect(target.stateHash()).toBe(file.finalStateHash);
+    expect(target.gripStatus(0).holding).toBe(false);
   });
 
   it("rejects replays whose config, engine, or initial state no longer match", async () => {

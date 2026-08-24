@@ -121,7 +121,7 @@ export class AutonomyManager {
         this.core.enqueueGrabToggle(msg.slot);
         break;
       case "release":
-        this.core.busReplayInject({ kind: "release", slot: msg.slot });
+        this.core.injectCommand({ kind: "release", slot: msg.slot });
         break;
       case "log":
         this.states.set(slot, { status: this.states.get(slot)?.status ?? "running", detail: msg.message.slice(0, 200) });

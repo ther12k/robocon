@@ -58,8 +58,18 @@ export class CommandBus {
     }
   }
 
+  /**
+   * Applies an external command immediately and records it against the next
+   * tick boundary (the first step its effects can influence).
+   */
   inject(action: CommandAction): void {
+    let entry: RecordedCommand | null = null;
+    if (this.history) {
+      entry = { tick: this.currentTick + 1, action };
+      this.history.push(entry);
+    }
     const applied = this.handler?.(action, this.currentTick);
+    if (entry && applied === false) entry.ok = false;
     this.markDelivered(action, applied !== false);
   }
 
