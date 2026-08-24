@@ -287,14 +287,12 @@ function stopReplayRecording(opts: { download: boolean } = { download: true }): 
   return file;
 }
 
-function finishPlayback(detail: string): void {
+function finishPlayback(detail: string, cls: "ok" | "warn" | "err" = "warn"): void {
   if (!core) return;
   core.stopReplayPlayback();
   replayUi = "idle";
   updateReplayButtons();
-  setReplayStatus([
-    { cls: detail === "finished" ? "ok" : "warn", text: `replay ${detail}` },
-  ]);
+  setReplayStatus([{ cls, text: `replay ${detail}` }]);
 }
 
 function loadReplayText(text: string): { ok: boolean } {
@@ -541,6 +539,11 @@ window.addEventListener("keydown", (e) => {
     btnBuilder.click();
     return;
   }
+  if (e.key === "v" || e.key === "V") {
+    if (targetEditable) return;
+    btnAutonomy.click();
+    return;
+  }
   if (builder?.isOpen()) {
     if (e.key === "Escape") {
       builder.close();
@@ -667,7 +670,12 @@ async function main(): Promise<void> {
     }
 
     if (replayUi === "playing" && core && !core.isReplayPlaybackActive()) {
-      finishPlayback(core.wasReplayPlaybackCompleted() ? "finished" : "stopped");
+      const desync = core.replayDesync;
+      if (desync !== null) {
+        finishPlayback(`aborted — state diverged from checkpoint at tick ${desync}`, "err");
+      } else {
+        finishPlayback(core.wasReplayPlaybackCompleted() ? "finished" : "stopped");
+      }
     }
 
     rig!.update(dt);

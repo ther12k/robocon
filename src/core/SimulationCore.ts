@@ -85,8 +85,10 @@ export class SimulationCore {
   private checkpointIntervalTicks = 0;
   private initialStateAtCapture = "";
   private replayCmds: Map<number, CommandAction[]> | null = null;
+  private replayVerify: Map<number, string> | null = null;
   private replayTotalTicks = 0;
   private replayCompleted = false;
+  private replayDesyncTick: number | null = null;
 
   constructor(arena: ArenaConfig, competition: CompetitionRuleset, profile: SimulationProfile) {
     this.arena = arena;
@@ -350,7 +352,9 @@ export class SimulationCore {
     this.resetObjectsToSpawns();
     this.physics.resetAccumulator();
     this.replayCmds = null;
+    this.replayVerify = null;
     this.replayCompleted = false;
+    this.replayDesyncTick = null;
     this.tick = 0;
     this.bus.resetQueue();
   }
@@ -366,6 +370,7 @@ export class SimulationCore {
       map.set(c.tick, list);
     }
     this.replayCmds = map;
+    this.replayVerify = new Map(file.checkpoints.map((c) => [c.tick, c.hash]));
     this.replayTotalTicks = file.totalTicks;
     this.inputGateEnabled = true;
     return [];
@@ -373,6 +378,7 @@ export class SimulationCore {
 
   stopReplayPlayback(): void {
     this.replayCmds = null;
+    this.replayVerify = null;
     this.inputGateEnabled = false;
   }
 
@@ -382,6 +388,10 @@ export class SimulationCore {
 
   wasReplayPlaybackCompleted(): boolean {
     return this.replayCompleted;
+  }
+
+  get replayDesync(): number | null {
+    return this.replayDesyncTick;
   }
 
   slotTeam(slot: number): "red" | "blue" | undefined {
@@ -422,9 +432,17 @@ export class SimulationCore {
       this.replayCheckpoints.push({ tick: this.tick, hash: this.quantizedStateHash() });
     }
     this.tick += 1;
-    if (this.replayCmds && this.tick >= this.replayTotalTicks) {
-      this.stopReplayPlayback();
-      this.replayCompleted = true;
+    if (this.replayCmds) {
+      const expected = this.replayVerify?.get(this.tick - 1);
+      if (expected !== undefined && this.quantizedStateHash() !== expected) {
+        this.replayDesyncTick = this.tick - 1;
+        this.stopReplayPlayback();
+        return;
+      }
+      if (this.tick >= this.replayTotalTicks) {
+        this.stopReplayPlayback();
+        this.replayCompleted = true;
+      }
     }
   }
 

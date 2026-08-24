@@ -159,6 +159,26 @@ describe("versioned replay files (R1-06)", () => {
     expect(core.stateHash()).toBe(original.finalStateHash);
   });
 
+  it("aborts playback and reports the first checkpoint tick whose hash diverges", async () => {
+    await RAPIER.init();
+    const original = recordToFile();
+    expect(original.checkpoints.length).toBeGreaterThan(2);
+
+    const corrupted = structuredClone(original);
+    const victim = corrupted.checkpoints[corrupted.checkpoints.length - 1];
+    victim.hash = "00000000";
+
+    const core = newCore();
+    expect(core.startReplayPlayback(corrupted)).toEqual([]);
+    let guard = 0;
+    while (core.isReplayPlaybackActive() && guard++ < corrupted.totalTicks * 3) {
+      core.advance(core.physics.fixedDt);
+    }
+    expect(core.isReplayPlaybackActive()).toBe(false);
+    expect(core.wasReplayPlaybackCompleted()).toBe(false);
+    expect(core.replayDesync).toBe(victim.tick);
+  });
+
   it("rejects replays whose config, engine, or initial state no longer match", async () => {
     await RAPIER.init();
     const file = recordToFile();
