@@ -1,6 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import type { ArenaConfig, CompetitionRuleset, DriveCommand, RobotSpec, SimulationProfile } from "../sim/types";
-import { PhysicsWorld } from "../sim/physics/PhysicsWorld";
+import { PhysicsWorld, type TrackedEntity } from "../sim/physics/PhysicsWorld";
 import { OwnershipRegistry } from "../sim/physics/OwnershipRegistry";
 import { createRobotBody } from "../sim/robot/RobotBody";
 import { applyDrive } from "../sim/robot/DriveController";
@@ -68,7 +68,7 @@ interface TriggerState {
 }
 
 export class SimulationCore {
-  readonly physics: PhysicsWorld;
+  physics: PhysicsWorld;
   readonly bus = new CommandBus();
   readonly arena: ArenaConfig;
   readonly competition: CompetitionRuleset;
@@ -94,16 +94,26 @@ export class SimulationCore {
     this.arena = arena;
     this.competition = competition;
     this.profile = profile;
-    this.physics = new PhysicsWorld({ x: 0, y: -9.81, z: 0 });
-    if (profile.solverHz && profile.solverHz !== 60) {
-      (this.physics as { fixedDt: number }).fixedDt = 1 / profile.solverHz;
-      this.physics.world.timestep = this.physics.fixedDt;
+    this.physics = this.buildSession();
+    for (const t of arena.triggers ?? []) this.triggers.set(t.id, { inside: new Set() });
+    this.bus.setHandler((action) => this.handleAction(action));
+  }
+
+  private buildSession(): PhysicsWorld {
+    const physics = new PhysicsWorld({ x: 0, y: -9.81, z: 0 });
+    if (this.profile.solverHz && this.profile.solverHz !== 60) {
+      (physics as { fixedDt: number }).fixedDt = 1 / this.profile.solverHz;
+      physics.world.timestep = physics.fixedDt;
     }
-    this.physics.buildStaticFromArena(arena);
-    for (const spawn of arena.objectSpawns) {
-      const obj = this.physics.addDynamicObject(spawn, arena.surfaces.defaultFriction);
+    this.physics = physics;
+    physics.buildStaticFromArena(this.arena);
+    this.worldObjects = [];
+    this.objectEntityIds = new Map();
+    this.objectSpawns = new Map();
+    for (const spawn of this.arena.objectSpawns) {
+      const obj = physics.addDynamicObject(spawn, this.arena.surfaces.defaultFriction);
       const entityId = `obj-${spawn.objectId}`;
-      this.physics.registerEntity(entityId, obj.body);
+      physics.registerEntity(entityId, obj.body);
       this.worldObjects.push({ id: spawn.objectId, body: obj.body, collider: obj.collider });
       this.objectEntityIds.set(obj.collider.handle, entityId);
       this.objectSpawns.set(obj.collider.handle, {
@@ -111,8 +121,19 @@ export class SimulationCore {
         q: { x: 0, y: 0, z: 0, w: 1 },
       });
     }
-    for (const t of arena.triggers ?? []) this.triggers.set(t.id, { inside: new Set() });
-    this.bus.setHandler((action) => this.handleAction(action));
+    this._ownership = new OwnershipRegistry();
+    for (const [index, slot] of this.slots) {
+      const yaw = slot.spawn.yaw;
+      const { body } = createRobotBody(physics.world, slot.spec, index, slot.spawn.x, slot.spawn.z, yaw);
+      physics.registerEntity(`robot-${index}`, body);
+      slot.body = body;
+      slot.axes = { fwd: 0, strafe: 0, turn: 0 };
+      const gripperModule = slot.spec.modules?.find((m) => m.type === "gripper");
+      slot.gripper = gripperModule?.type === "gripper"
+        ? new GripperController(gripperModule, `robot-${index}`, index, this.ownershipRef)
+        : null;
+    }
+    return physics;
   }
 
   private handleAction(action: CommandAction): boolean {
@@ -246,8 +267,9 @@ export class SimulationCore {
 
   advance(frameDt: number): void {
     this.physics.advance(frameDt, (dt) => {
-      this.onFixedTick();
+      const halt = this.onFixedTick();
       for (const fn of this.postStepListeners) fn(dt);
+      return halt;
     });
   }
 
@@ -348,9 +370,21 @@ export class SimulationCore {
   }
 
   resetForReplay(): void {
-    this.resetRobotsToSpawns();
-    this.resetObjectsToSpawns();
-    this.physics.resetAccumulator();
+    const meshes = new Map<string, NonNullable<TrackedEntity["mesh"]>>();
+    for (const id of this.physics.entityIds()) {
+      const mesh = this.physics.getEntity(id)?.mesh;
+      if (mesh) meshes.set(id, mesh);
+    }
+    const oldWorld = this.physics.world;
+    this.buildSession();
+    for (const [id, mesh] of meshes) this.physics.attachMesh(id, mesh);
+    try {
+      oldWorld.free();
+    } catch {
+      // world.free() is unavailable on some Rapier builds; GC will reclaim
+    }
+    for (const st of this.triggers.values()) st.inside = new Set();
+    this.pendingEvents = [];
     this.replayCmds = null;
     this.replayVerify = null;
     this.replayCompleted = false;
@@ -414,7 +448,7 @@ export class SimulationCore {
     return { halfW: this.arena.dimensions.width / 2, halfL: this.arena.dimensions.length / 2 };
   }
 
-  private onFixedTick(): void {
+  private onFixedTick(): boolean {
     const injected = this.replayCmds?.get(this.tick);
     if (injected) for (const a of injected) this.applyAction(a);
     this.bus.setTick(this.tick);
@@ -437,13 +471,15 @@ export class SimulationCore {
       if (expected !== undefined && this.quantizedStateHash() !== expected) {
         this.replayDesyncTick = this.tick - 1;
         this.stopReplayPlayback();
-        return;
+        return false;
       }
       if (this.tick >= this.replayTotalTicks) {
         this.stopReplayPlayback();
         this.replayCompleted = true;
+        return false;
       }
     }
+    return true;
   }
 
   private evaluateTriggers(): void {

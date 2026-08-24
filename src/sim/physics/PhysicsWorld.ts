@@ -164,13 +164,17 @@ export class PhysicsWorld {
     return [...this.entities.keys()];
   }
 
-  advance(frameDt: number, onStep?: (dt: number) => void): void {
+  advance(frameDt: number, onStep?: (dt: number) => boolean | void): void {
     this.accumulator += Math.min(frameDt, 0.25);
     while (this.accumulator >= this.fixedDt) {
-      onStep?.(this.fixedDt);
+      const haltAfterStep = onStep?.(this.fixedDt);
       this.world.step();
       this.syncMeshes();
       this.accumulator -= this.fixedDt;
+      if (haltAfterStep === false) {
+        this.accumulator = 0;
+        break;
+      }
     }
   }
 
