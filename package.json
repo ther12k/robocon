@@ -1,0 +1,26 @@
+{
+  "name": "robocon-sim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --exclude \"tests/smoke.browser.test.ts\"",
+    "test:browser": "npm run build && vitest run --config vitest.smoke.config.ts"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.20.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/three": "^0.180.0",
+    "puppeteer-core": "^24.43.1",
+    "typescript": "~5.6.3",
+    "vite": "^7.1.0",
+    "vitest": "^4.1.11"
+  }
+}

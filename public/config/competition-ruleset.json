@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "match": {
+    "setupSec": 60,
+    "playSec": 180,
+    "retriesPerTeam": 3
+  },
+  "teamWeightBudgetKg": 50,
+  "scoring": [
+    {
+      "id": "goalRed",
+      "type": "objectInTrigger",
+      "triggerId": "goalZoneRed",
+      "team": "red",
+      "points": 10
+    },
+    {
+      "id": "goalBlue",
+      "type": "objectInTrigger",
+      "triggerId": "goalZoneBlue",
+      "team": "blue",
+      "points": 10
+    }
+  ],
+  "absoluteWin": {
+    "type": "scoreThreshold",
+    "points": 30
+  },
+  "violations": [
+    {
+      "id": "outOfBounds",
+      "type": "outOfBounds",
+      "marginM": 0.25,
+      "effect": "retry"
+    }
+  ]
+}

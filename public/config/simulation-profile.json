@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "maxSpeedMps": 3,
+  "maxAccelMps2": 8,
+  "maxTurnRps": 2,
+  "solverHz": 60
+}

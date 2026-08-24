@@ -1,0 +1,28 @@
+{
+  "name": "Preset R2",
+  "role": "R2",
+  "team": "blue",
+  "chassis": {
+    "drive": "mecanum",
+    "footprint": {
+      "w": 0.5,
+      "l": 0.55
+    },
+    "height": 0.28,
+    "massKg": 14,
+    "maxSpeedMps": 2.4,
+    "maxAccelMps2": 5,
+    "maxTurnRps": 1.5
+  },
+  "modules": [
+    {
+      "type": "gripper",
+      "mount": {
+        "x": 0,
+        "y": 0.1,
+        "z": 0.32
+      },
+      "gripRangeM": 0.35
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoboconSim — ABU ROBOCON 2027 Arena</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="viewport"></canvas>
+
+      <header id="topbar">
+        <div class="brand">RoboconSim <span id="arena-name"></span></div>
+        <div class="actions">
+          <button id="btn-match-start" title="Start match (Enter)">▶ Start Match</button>
+          <button id="btn-autonomy" title="Autonomy script editor (V)">Autonomy</button>
+          <button id="btn-top-view" title="Toggle top view (T)">Top View</button>
+          <button id="btn-measure" title="Measure distance (M)">Measure</button>
+          <button id="btn-follow" title="Follow active robot (F)">Follow Cam</button>
+          <button id="btn-builder" title="Robot builder (B)">Builder</button>
+          <button id="btn-reset-cam" title="Reset camera (R)">Reset Cam</button>
+        </div>
+      </header>
+
+      <div id="measure-hud" hidden>
+        <span id="measure-label">Click two points on the field</span>
+      </div>
+
+      <aside id="info-panel">
+        <h3>Arena Info</h3>
+        <dl>
+          <dt>Theme</dt><dd id="info-theme">—</dd>
+          <dt>Rulebook</dt><dd id="info-rulebook">—</dd>
+          <dt>Field</dt><dd id="info-dimensions">—</dd>
+        </dl>
+        <p id="verify-warning" class="warn"></p>
+      </aside>
+
+      <div id="robot-panel">
+        <h3>Active Robot <span class="kbd">Tab</span></h3>
+        <div id="robot-name">—</div>
+        <div id="robot-drive" class="muted">—</div>
+        <div id="robot-pose" class="mono">—</div>
+        <div id="robot-speed" class="big mono">0.00 m/s</div>
+        <div id="robot-grip" class="hint mono" hidden></div>
+        <p class="hint">W/S drive · A/D strafe (holonomic) · Q/E rotate · Space grab</p>
+      </div>
+
+      <div id="scoreboard" hidden>
+        <span class="score red" id="score-red">0</span>
+        <span class="mid">
+          <span id="match-phase">IDLE</span>
+          <span id="match-timer">0:00</span>
+          <span id="retries">⟳3/3</span>
+        </span>
+        <span class="score blue" id="score-blue">0</span>
+      </div>
+
+      <div id="match-banner" hidden></div>
+
+      <div id="boot-overlay">
+        <div class="boot-card">
+          <div class="boot-title">RoboconSim</div>
+          <div id="boot-status">Loading physics + arena…</div>
+        </div>
+      </div>
+
+      <div id="script-panel" hidden>
+        <div class="builder-header">
+          <h3>Autonomy — Slot <span id="script-slot">1</span></h3>
+          <button class="builder-close" id="script-close">×</button>
+        </div>
+        <textarea id="script-code" class="builder-json" spellcheck="false"
+          placeholder="function onTick(sense, api) {&#10;  api.setAxes(0.5, 0, 0);&#10;}"></textarea>
+        <div class="builder-actions">
+          <button id="script-load">Load .js</button>
+          <button id="script-run" class="primary">Run ▶</button>
+          <button id="script-stop">Stop ■</button>
+        </div>
+        <input type="file" id="script-file" accept=".js,text/javascript" hidden />
+        <div id="script-status" class="builder-issues"><span class="muted">Defines onTick(sense, api). Runs in a sandboxed worker.</span></div>
+      </div>
+
+      <footer id="statusbar">
+        <span id="fps">— fps</span>
+        <span id="hint">Drag = orbit · Wheel = zoom · T top · M measure · F follow · B builder · Tab robot · Space grab</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

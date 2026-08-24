@@ -1,0 +1,28 @@
+{
+  "name": "Preset R1",
+  "role": "R1",
+  "team": "red",
+  "chassis": {
+    "drive": "differential",
+    "footprint": {
+      "w": 0.6,
+      "l": 0.7
+    },
+    "height": 0.32,
+    "massKg": 22,
+    "maxSpeedMps": 2,
+    "maxAccelMps2": 4,
+    "maxTurnRps": 1.2
+  },
+  "modules": [
+    {
+      "type": "gripper",
+      "mount": {
+        "x": 0,
+        "y": 0.12,
+        "z": 0.4
+      },
+      "gripRangeM": 0.35
+    }
+  ]
+}

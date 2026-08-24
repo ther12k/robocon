@@ -1,0 +1,252 @@
+{
+  "meta": {
+    "name": "ABU ROBOCON 2027 — [THEME TBD] Solo, Indonesia",
+    "rulebookVersion": "0-placeholder",
+    "tolerancePct": 5,
+    "schemaVersion": 1,
+    "verifyNote": "Placeholder layout pending official rulebook / video verification. All dimensions are defaults and must be verified.",
+    "source": {
+      "authority": "provisional",
+      "documentTitle": "None — inferred placeholder",
+      "status": "inferred",
+      "verifiedAt": null
+    }
+  },
+  "dimensions": {
+    "width": 16,
+    "length": 16,
+    "wallHeight": 0.15,
+    "wallThickness": 0.1
+  },
+  "zones": [
+    {
+      "id": "startRed",
+      "team": "red",
+      "shape": "rect",
+      "x": -7,
+      "z": 6.5,
+      "w": 2,
+      "l": 3,
+      "label": "START RED"
+    },
+    {
+      "id": "startBlue",
+      "team": "blue",
+      "shape": "rect",
+      "x": 7,
+      "z": -6.5,
+      "w": 2,
+      "l": 3,
+      "label": "START BLUE"
+    },
+    {
+      "id": "halfRed",
+      "team": "red",
+      "shape": "rect",
+      "x": -4,
+      "z": 0,
+      "w": 8,
+      "l": 16
+    },
+    {
+      "id": "halfBlue",
+      "team": "blue",
+      "shape": "rect",
+      "x": 4,
+      "z": 0,
+      "w": 8,
+      "l": 16
+    },
+    {
+      "id": "centerLine",
+      "shape": "rect",
+      "x": 0,
+      "z": 0,
+      "w": 16,
+      "l": 0.05
+    }
+  ],
+  "staticProps": [
+    {
+      "id": "testRamp",
+      "type": "ramp",
+      "pose": {
+        "x": 0,
+        "y": 0.075,
+        "z": -4.5,
+        "rotX": -0.14
+      },
+      "size": {
+        "w": 1.6,
+        "h": 0.06,
+        "d": 3
+      },
+      "material": "wood",
+      "color": "#9a7448"
+    }
+  ],
+  "objectSpawns": [
+    {
+      "objectId": "objA#1",
+      "typeId": "objA",
+      "pose": {
+        "x": -2,
+        "y": 0.075,
+        "z": 2
+      },
+      "initialState": "idle",
+      "render": {
+        "shape": "cylinder",
+        "size": {
+          "w": 0.15,
+          "h": 0.15,
+          "d": 0.15
+        },
+        "color": "#fbbf24"
+      },
+      "massKg": 0.8
+    },
+    {
+      "objectId": "objA#2",
+      "typeId": "objA",
+      "pose": {
+        "x": -3,
+        "y": 0.075,
+        "z": 3.5
+      },
+      "initialState": "idle",
+      "render": {
+        "shape": "cylinder",
+        "size": {
+          "w": 0.15,
+          "h": 0.15,
+          "d": 0.15
+        },
+        "color": "#fbbf24"
+      },
+      "massKg": 0.8
+    },
+    {
+      "objectId": "objB#1",
+      "typeId": "objB",
+      "pose": {
+        "x": 2,
+        "y": 0.075,
+        "z": -2
+      },
+      "initialState": "idle",
+      "render": {
+        "shape": "box",
+        "size": {
+          "w": 0.2,
+          "h": 0.15,
+          "d": 0.2
+        },
+        "color": "#a78bfa"
+      },
+      "massKg": 1.2
+    },
+    {
+      "objectId": "objB#2",
+      "typeId": "objB",
+      "pose": {
+        "x": 3,
+        "y": 0.075,
+        "z": -3.5
+      },
+      "initialState": "idle",
+      "render": {
+        "shape": "box",
+        "size": {
+          "w": 0.2,
+          "h": 0.15,
+          "d": 0.2
+        },
+        "color": "#a78bfa"
+      },
+      "massKg": 1.2
+    }
+  ],
+  "targets": [
+    {
+      "id": "targetRed",
+      "accepts": [
+        "objA"
+      ],
+      "check": "snapPose",
+      "pose": {
+        "x": -6,
+        "y": 0.002,
+        "z": 0
+      },
+      "size": {
+        "w": 0.5,
+        "d": 0.5
+      },
+      "scoreEvent": "placed"
+    },
+    {
+      "id": "targetBlue",
+      "accepts": [
+        "objB"
+      ],
+      "check": "snapPose",
+      "pose": {
+        "x": 6,
+        "y": 0.002,
+        "z": 0
+      },
+      "size": {
+        "w": 0.5,
+        "d": 0.5
+      },
+      "scoreEvent": "placed"
+    }
+  ],
+  "surfaces": {
+    "defaultFriction": 0.7
+  },
+  "triggers": [
+    {
+      "id": "goalZoneRed",
+      "shape": "rect",
+      "x": -6,
+      "z": 0,
+      "w": 0.9,
+      "l": 0.9,
+      "yMin": 0,
+      "yMax": 1,
+      "targets": [
+        "objects"
+      ],
+      "label": "GOAL RED"
+    },
+    {
+      "id": "centerPad",
+      "shape": "rect",
+      "x": 0,
+      "z": 0,
+      "w": 2,
+      "l": 2,
+      "yMin": 0,
+      "yMax": 0.5,
+      "targets": [
+        "robots"
+      ]
+    },
+    {
+      "id": "goalZoneBlue",
+      "shape": "rect",
+      "x": 6,
+      "z": 0,
+      "w": 0.9,
+      "l": 0.9,
+      "yMin": 0,
+      "yMax": 1,
+      "targets": [
+        "objects"
+      ],
+      "label": "GOAL BLUE"
+    }
+  ]
+}
