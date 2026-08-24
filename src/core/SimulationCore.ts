@@ -6,6 +6,12 @@ import { createRobotBody } from "../sim/robot/RobotBody";
 import { applyDrive } from "../sim/robot/DriveController";
 import { GripperController, type GrabCandidate } from "../sim/robot/GripperController";
 import { CommandBus, type CommandAction } from "./CommandBus";
+import {
+  REPLAY_SCHEMA_VERSION,
+  type ReplayCheckpoint,
+  type ReplayFile,
+  type ReplayRuntimeInfo,
+} from "./replayFile";
 import { quatFromEulerYXZ } from "../sim/orientation";
 
 export const ENGINE_VERSION = "0.1.0";
@@ -67,6 +73,9 @@ export class SimulationCore {
   private pendingEvents: SimEvent[] = [];
   private tick = 0;
   inputGateEnabled = false;
+  private replayCheckpoints: ReplayCheckpoint[] = [];
+  private checkpointIntervalTicks = 0;
+  private initialStateAtCapture = "";
 
   constructor(arena: ArenaConfig, competition: CompetitionRuleset, profile: SimulationProfile) {
     this.arena = arena;
@@ -225,6 +234,46 @@ export class SimulationCore {
     return this.tick;
   }
 
+  beginReplayCapture(checkpointIntervalTicks = 60): void {
+    if (checkpointIntervalTicks <= 0) {
+      throw new Error("checkpointIntervalTicks must be > 0");
+    }
+    this.bus.startRecording();
+    this.replayCheckpoints = [];
+    this.checkpointIntervalTicks = checkpointIntervalTicks;
+    this.initialStateAtCapture = this.stateHash();
+  }
+
+  endReplayCapture(): ReplayFile {
+    const commands = this.bus.stopRecording();
+    const file: ReplayFile = {
+      schemaVersion: REPLAY_SCHEMA_VERSION,
+      engineVersion: ENGINE_VERSION,
+      physicsVersion: RAPIER.version(),
+      fixedDt: this.physics.fixedDt,
+      configHashes: this.configHashes(),
+      initialStateHash: this.initialStateAtCapture,
+      checkpointIntervalTicks: this.checkpointIntervalTicks,
+      checkpoints: [...this.replayCheckpoints],
+      totalTicks: this.tick,
+      finalStateHash: this.stateHash(),
+      commands,
+    };
+    this.checkpointIntervalTicks = 0;
+    this.initialStateAtCapture = "";
+    return file;
+  }
+
+  replayRuntimeInfo(): ReplayRuntimeInfo {
+    return {
+      engineVersion: ENGINE_VERSION,
+      physicsVersion: RAPIER.version(),
+      fixedDt: this.physics.fixedDt,
+      configHashes: this.configHashes(),
+      initialStateHash: this.stateHash(),
+    };
+  }
+
   matchInfo(): {
     phase: string;
     timeRemainingSec: number;
@@ -292,6 +341,13 @@ export class SimulationCore {
       slot.gripper?.update(slot.body);
     }
     this.evaluateTriggers();
+    if (
+      this.checkpointIntervalTicks > 0 &&
+      this.bus.isRecording() &&
+      this.tick % this.checkpointIntervalTicks === 0
+    ) {
+      this.replayCheckpoints.push({ tick: this.tick, hash: this.quantizedStateHash() });
+    }
     this.tick += 1;
   }
 
@@ -376,6 +432,25 @@ export class SimulationCore {
     return fnv1a(JSON.stringify({ entities: snap.entities, holds: snap.holds }));
   }
 
+  quantizedStateHash(): string {
+    const entities: Array<{ id: string; p: number[]; q: number[] }> = [];
+    for (const id of this.physics.entityIds()) {
+      const t = this.physics.getEntityTransform(id);
+      if (!t) continue;
+      entities.push({
+        id,
+        p: [q2(t.position.x), q2(t.position.y), q2(t.position.z)],
+        q: [q2(t.quaternion.x), q2(t.quaternion.y), q2(t.quaternion.z), q2(t.quaternion.w)],
+      });
+    }
+    const holds: Array<{ owner: string; objectId: string }> = [];
+    for (const o of this.worldObjects) {
+      const owner = this.ownershipRef.ownerOf(o.collider.handle);
+      if (owner) holds.push({ owner, objectId: o.id });
+    }
+    return fnv1a(JSON.stringify({ entities, holds }));
+  }
+
   configHashes(): Record<string, string> {
     return {
       arena: fnv1a(JSON.stringify(this.arena)),
@@ -405,5 +480,8 @@ function round3(n: number): number {
 }
 function round5(n: number): number {
   return Math.round(n * 100000) / 100000;
+}
+function q2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
