@@ -26,7 +26,7 @@ beforeAll(async () => {
       else server?.httpServer?.once("listening", () => resolve());
     });
     browser = await puppeteer.launch({
-      executablePath: "/usr/bin/google-chrome",
+      executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome",
       headless: true,
       args: ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
     });
