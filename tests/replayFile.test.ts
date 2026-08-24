@@ -118,6 +118,47 @@ describe("versioned replay files (R1-06)", () => {
     }
   });
 
+  it("resetForReplay restores robots and objects so the spawn hash matches a fresh core", async () => {
+    await RAPIER.init();
+    const fresh = newCore();
+    const pristineHash = fresh.stateHash();
+
+    const dirty = newCore();
+    dirty.beginReplayCapture(CHECKPOINT_EVERY);
+    for (let i = 0; i < 60; i++) {
+      dirty.setAxesFromInput(0, { fwd: 1, strafe: 1, turn: 0.5 });
+      if (i === 10) {
+        const obj = dirty.worldObjectCandidates()[0];
+        obj.body.setTranslation({ x: 5, y: 1, z: 5 }, true);
+      }
+      dirty.advance(dirty.physics.fixedDt);
+    }
+    dirty.endReplayCapture();
+    expect(dirty.stateHash()).not.toBe(pristineHash);
+
+    dirty.resetForReplay();
+    expect(dirty.stateHash()).toBe(pristineHash);
+  });
+
+  it("playback reproduces the final hash under jittery multi-step frame advances", async () => {
+    await RAPIER.init();
+    const original = recordToFile();
+
+    const core = newCore();
+    expect(core.startReplayPlayback(original)).toEqual([]);
+    const pattern = [1, 3, 0.5, 2, 1, 4, 0.5, 0.5, 2, 3];
+    let i = 0;
+    let elapsed = 0;
+    while (core.isReplayPlaybackActive() && elapsed < original.totalTicks * 3) {
+      const dt = core.physics.fixedDt * pattern[i++ % pattern.length];
+      core.advance(dt);
+      elapsed += pattern[(i - 1) % pattern.length];
+    }
+    expect(core.isReplayPlaybackActive()).toBe(false);
+    expect(core.wasReplayPlaybackCompleted()).toBe(true);
+    expect(core.stateHash()).toBe(original.finalStateHash);
+  });
+
   it("rejects replays whose config, engine, or initial state no longer match", async () => {
     await RAPIER.init();
     const file = recordToFile();

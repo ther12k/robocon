@@ -9,6 +9,16 @@ interface SimProbe {
   __sim_gripStatus(): string;
   __sim_activeCameraIsOrtho(): boolean;
   __sim_placeObjectForGrab(): string | null;
+  __sim_replayState(): string;
+  __sim_replayRecordToggle(): void;
+  __sim_replayStopExport(): {
+    schemaVersion: number;
+    engineVersion: string;
+    totalTicks: number;
+    commands: Array<{ tick: number }>;
+  } | null;
+  __sim_replayLoadText(text: string): { ok: boolean };
+  __sim_replayPlay(): { ok: boolean };
 }
 
 const PORT = 4173;
@@ -173,5 +183,48 @@ describe("browser smoke (R0-07)", () => {
     await page.keyboard.press("KeyT");
     await new Promise((r) => setTimeout(r, 150));
     expect(await isOrtho()).toBe(false);
+  });
+
+  it("replay round-trip: record, export, load, play back to the same pose", async (ctx) => {
+    ctx.skip(!browserAvailable, "chrome unavailable");
+    await forceClosePanels();
+
+    await page.evaluate(() => (window as unknown as SimProbe).__sim_replayRecordToggle());
+    expect(
+      await page.evaluate(() => (window as unknown as SimProbe).__sim_replayState()),
+    ).toBe("recording");
+
+    await page.keyboard.down("KeyW");
+    await new Promise((r) => setTimeout(r, 1000));
+    await page.keyboard.up("KeyW");
+    await new Promise((r) => setTimeout(r, 300));
+
+    const file = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayStopExport());
+    expect(file).not.toBeNull();
+    expect(file!.schemaVersion).toBe(1);
+    expect(file!.commands.length).toBeGreaterThan(0);
+    const recordedEnd = await page.evaluate(() => (window as unknown as SimProbe).__sim_robotPos());
+
+    const loadResult = await page.evaluate(
+      (text) => (window as unknown as SimProbe).__sim_replayLoadText(text),
+      JSON.stringify(file),
+    );
+    expect(loadResult.ok).toBe(true);
+
+    const playResult = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayPlay());
+    expect(playResult.ok).toBe(true);
+
+    const start = Date.now();
+    let state = "playing";
+    while (Date.now() - start < 20000) {
+      state = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayState());
+      if (state !== "playing") break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(state).toBe("idle");
+
+    const replayedEnd = await page.evaluate(() => (window as unknown as SimProbe).__sim_robotPos());
+    const gap = Math.hypot(recordedEnd.x - replayedEnd.x, recordedEnd.z - replayedEnd.z);
+    expect(gap).toBeLessThan(0.05);
   });
 });

@@ -14,6 +14,7 @@ import { MatchController, type MatchPhase } from "./core/match";
 import { AutonomyManager, type AutonomyState } from "./core/autonomy";
 import { createBrowserHostFactory } from "./core/browserHost";
 import { checkSchemaVersion } from "./core/schemas";
+import { type ReplayFile } from "./core/replayFile";
 import { buildRobotMesh } from "./sim/robot/RobotVisual";
 import { InputManager } from "./sim/input/InputManager";
 import { RobotBuilderPanel } from "./ui/RobotBuilderPanel";
@@ -48,6 +49,15 @@ const scriptStopBtn = document.getElementById("script-stop") as HTMLButtonElemen
 const scriptLoadBtn = document.getElementById("script-load") as HTMLButtonElement;
 const scriptFileInput = document.getElementById("script-file") as HTMLInputElement;
 const btnMatchStart = document.getElementById("btn-match-start") as HTMLButtonElement;
+const btnReplay = document.getElementById("btn-replay") as HTMLButtonElement;
+const replayPanel = document.getElementById("replay-panel")!;
+const replayCloseBtn = document.getElementById("replay-close")!;
+const replayRecordBtn = document.getElementById("replay-record") as HTMLButtonElement;
+const replayPlayBtn = document.getElementById("replay-play") as HTMLButtonElement;
+const replayStopBtn = document.getElementById("replay-stop") as HTMLButtonElement;
+const replayLoadBtn = document.getElementById("replay-load") as HTMLButtonElement;
+const replayFileInput = document.getElementById("replay-file") as HTMLInputElement;
+const replayStatusEl = document.getElementById("replay-status")!;
 const scoreboardEl = document.getElementById("scoreboard")!;
 const scoreRedEl = document.getElementById("score-red")!;
 const scoreBlueEl = document.getElementById("score-blue")!;
@@ -62,7 +72,7 @@ const robotPoseEl = document.getElementById("robot-pose")!;
 const robotSpeedEl = document.getElementById("robot-speed")!;
 const robotGripEl = document.getElementById("robot-grip")!;
 
-const controlButtons = [btnMatchStart, btnTopView, btnMeasure, btnFollow, btnResetCam, btnBuilder, btnAutonomy];
+const controlButtons = [btnMatchStart, btnReplay, btnTopView, btnMeasure, btnFollow, btnResetCam, btnBuilder, btnAutonomy];
 for (const b of controlButtons) b.disabled = true;
 
 let phase: AppPhase = "loading";
@@ -214,6 +224,158 @@ scriptStopBtn.addEventListener("click", () => {
   autonomy?.detach(activeSlot);
   setScriptStatus({ status: "detached", detail: "stopped by operator" });
 });
+
+type ReplayUiState = "idle" | "recording" | "playing";
+
+let replayUi: ReplayUiState = "idle";
+let replayLoadedFile: ReplayFile | null = null;
+
+function setReplayStatus(entries: Array<{ cls: string; text: string }>): void {
+  replayStatusEl.innerHTML = entries.map((e) => `<span class="${e.cls}">${e.text}</span>`).join("");
+}
+
+function updateReplayButtons(): void {
+  const recording = replayUi === "recording";
+  const playing = replayUi === "playing";
+  replayRecordBtn.classList.toggle("recording", recording);
+  replayRecordBtn.textContent = recording ? "■ Stop & Export" : "● Record";
+  replayRecordBtn.disabled = playing;
+  replayPlayBtn.disabled = playing || recording || !replayLoadedFile;
+  replayStopBtn.disabled = !playing;
+  replayLoadBtn.disabled = playing || recording;
+}
+
+function requireIdleMatch(): boolean {
+  if (match && match.phase !== "idle") {
+    setReplayStatus([
+      { cls: "err", text: "match must be idle — match state is not captured in replay files" },
+    ]);
+    return false;
+  }
+  return true;
+}
+
+function startReplayRecording(): void {
+  if (!core || replayUi !== "idle" || !requireIdleMatch()) return;
+  core.resetForReplay();
+  core.beginReplayCapture(60);
+  replayUi = "recording";
+  updateReplayButtons();
+  setReplayStatus([{ cls: "warn", text: "recording from spawn reset — drive, then Stop & Export" }]);
+}
+
+function downloadJson(data: unknown, filename: string): void {
+  const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function stopReplayRecording(opts: { download: boolean } = { download: true }): ReplayFile | null {
+  if (!core || replayUi !== "recording") return null;
+  const file = core.endReplayCapture();
+  replayLoadedFile = file;
+  replayUi = "idle";
+  updateReplayButtons();
+  if (opts.download) downloadJson(file, `robocon-replay-${Date.now()}.json`);
+  setReplayStatus([
+    { cls: "ok", text: `captured ${file.commands.length} commands / ${file.totalTicks} ticks` },
+  ]);
+  return file;
+}
+
+function finishPlayback(detail: string): void {
+  if (!core) return;
+  core.stopReplayPlayback();
+  replayUi = "idle";
+  updateReplayButtons();
+  setReplayStatus([
+    { cls: detail === "finished" ? "ok" : "warn", text: `replay ${detail}` },
+  ]);
+}
+
+function loadReplayText(text: string): { ok: boolean } {
+  if (!core) return { ok: false };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    setReplayStatus([{ cls: "err", text: `invalid JSON: ${String(err)}` }]);
+    return { ok: false };
+  }
+  const f = parsed as Partial<ReplayFile> | null;
+  if (
+    !f ||
+    typeof f !== "object" ||
+    typeof f.schemaVersion !== "number" ||
+    !Array.isArray(f.commands) ||
+    typeof f.totalTicks !== "number"
+  ) {
+    setReplayStatus([{ cls: "err", text: "not a replay file (missing schemaVersion/commands/totalTicks)" }]);
+    return { ok: false };
+  }
+  replayLoadedFile = parsed as ReplayFile;
+  replayUi = "idle";
+  updateReplayButtons();
+  setReplayStatus([
+    {
+      cls: "ok",
+      text: `loaded ${f.commands.length} commands / ${f.totalTicks} ticks · engine ${String(f.engineVersion)}`,
+    },
+  ]);
+  return { ok: true };
+}
+
+function playReplay(): void {
+  if (!core || !replayLoadedFile || replayUi !== "idle" || !requireIdleMatch()) return;
+  const issues = core.startReplayPlayback(replayLoadedFile);
+  if (issues.length > 0) {
+    setReplayStatus(issues.map((i) => ({ cls: "err", text: `${i.field}: ${i.message}` })));
+    return;
+  }
+  replayUi = "playing";
+  updateReplayButtons();
+  setReplayStatus([{ cls: "warn", text: `playing ${replayLoadedFile.totalTicks} ticks…` }]);
+}
+
+btnReplay.addEventListener("click", () => {
+  if (phase !== "ready") return;
+  replayPanel.hidden = !replayPanel.hidden;
+  btnReplay.classList.toggle("active", !replayPanel.hidden);
+  input.setContext(replayPanel.hidden ? "simulation" : "ui");
+});
+
+replayCloseBtn.addEventListener("click", () => {
+  replayPanel.hidden = true;
+  btnReplay.classList.remove("active");
+  input.setContext("simulation");
+});
+
+replayRecordBtn.addEventListener("click", () => {
+  if (phase !== "ready") return;
+  if (replayUi === "recording") stopReplayRecording();
+  else startReplayRecording();
+});
+
+replayLoadBtn.addEventListener("click", () => replayFileInput.click());
+
+replayFileInput.addEventListener("change", () => {
+  const file = replayFileInput.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => loadReplayText(String(reader.result ?? ""));
+  reader.readAsText(file);
+  replayFileInput.value = "";
+});
+
+replayPlayBtn.addEventListener("click", () => {
+  if (phase === "ready") playReplay();
+});
+
+replayStopBtn.addEventListener("click", () => finishPlayback("stopped by operator"));
 
 function updateRobotPanel(): void {
   if (!core || !core.hasSlot(activeSlot)) return;
@@ -491,7 +653,7 @@ async function main(): Promise<void> {
     while (input.consumeTabPress()) setActiveSlot(activeSlot + 1);
 
     const cmd = input.readCommand();
-    if (core?.hasSlot(activeSlot)) {
+    if (replayUi !== "playing" && core?.hasSlot(activeSlot)) {
       core.setAxesFromInput(activeSlot, cmd);
       const gripDown = input.isDown("Space");
       if (gripDown && !prevGripDown) core.enqueueGrabToggle(activeSlot);
@@ -502,6 +664,10 @@ async function main(): Promise<void> {
       match.advance(dt);
     } else {
       core!.advance(dt);
+    }
+
+    if (replayUi === "playing" && core && !core.isReplayPlaybackActive()) {
+      finishPlayback(core.wasReplayPlaybackCompleted() ? "finished" : "stopped");
     }
 
     rig!.update(dt);
@@ -536,6 +702,11 @@ interface SimProbe {
   __sim_activeCameraIsOrtho(): boolean;
   __sim_placeObjectForGrab(): string | null;
   __sim_validateSpecText(text: string): unknown;
+  __sim_replayState(): ReplayUiState;
+  __sim_replayRecordToggle(): void;
+  __sim_replayStopExport(): unknown;
+  __sim_replayLoadText(text: string): { ok: boolean };
+  __sim_replayPlay(): { ok: boolean };
 }
 
 function installProbe(): void {
@@ -562,6 +733,14 @@ function installProbe(): void {
     } catch (err) {
       return { error: String(err) };
     }
+  };
+  w.__sim_replayState = () => replayUi;
+  w.__sim_replayRecordToggle = () => replayRecordBtn.click();
+  w.__sim_replayStopExport = () => stopReplayRecording({ download: false });
+  w.__sim_replayLoadText = (text: string) => loadReplayText(text);
+  w.__sim_replayPlay = () => {
+    playReplay();
+    return { ok: replayUi === "playing" };
   };
 }
 

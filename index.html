@@ -14,6 +14,7 @@
         <div class="brand">RoboconSim <span id="arena-name"></span></div>
         <div class="actions">
           <button id="btn-match-start" title="Start match (Enter)">▶ Start Match</button>
+          <button id="btn-replay" title="Record / load deterministic replays">Replay</button>
           <button id="btn-autonomy" title="Autonomy script editor (V)">Autonomy</button>
           <button id="btn-top-view" title="Toggle top view (T)">Top View</button>
           <button id="btn-measure" title="Measure distance (M)">Measure</button>
@@ -64,6 +65,21 @@
           <div class="boot-title">RoboconSim</div>
           <div id="boot-status">Loading physics + arena…</div>
         </div>
+      </div>
+
+      <div id="replay-panel" hidden>
+        <div class="builder-header">
+          <h3>Replay</h3>
+          <button class="builder-close" id="replay-close">×</button>
+        </div>
+        <div class="builder-actions">
+          <button id="replay-record">● Record</button>
+          <button id="replay-play" class="primary" disabled>Play ▶</button>
+          <button id="replay-stop" disabled>Stop ■</button>
+          <button id="replay-load">Load .json</button>
+        </div>
+        <input type="file" id="replay-file" accept=".json,application/json" hidden />
+        <div id="replay-status" class="builder-issues"><span class="muted">Record starts from spawn reset. Replays are gated on engine, config, and initial state.</span></div>
       </div>
 
       <div id="script-panel" hidden>

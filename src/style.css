@@ -149,6 +149,22 @@ html, body {
 #script-panel[hidden] { display: none; }
 #script-panel .builder-json { min-height: 160px; }
 
+#replay-panel {
+  position: absolute;
+  top: 64px;
+  right: 12px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+#replay-panel[hidden] { display: none; }
+#replay-panel button.recording { border-color: #f87171; color: #f87171; }
+
 #boot-overlay {
   position: absolute;
   inset: 0;

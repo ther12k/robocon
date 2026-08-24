@@ -8,7 +8,9 @@ import { GripperController, type GrabCandidate } from "../sim/robot/GripperContr
 import { CommandBus, type CommandAction } from "./CommandBus";
 import {
   REPLAY_SCHEMA_VERSION,
+  checkReplayCompatibility,
   type ReplayCheckpoint,
+  type ReplayCompatibilityIssue,
   type ReplayFile,
   type ReplayRuntimeInfo,
 } from "./replayFile";
@@ -56,6 +58,11 @@ interface Slot {
   spawn: { x: number; z: number; yaw: number };
 }
 
+interface ObjectSpawnSnapshot {
+  p: { x: number; y: number; z: number };
+  q: { x: number; y: number; z: number; w: number };
+}
+
 interface TriggerState {
   inside: Set<string>;
 }
@@ -69,6 +76,7 @@ export class SimulationCore {
   private slots = new Map<number, Slot>();
   private worldObjects: GrabCandidate[] = [];
   private objectEntityIds = new Map<number, string>();
+  private objectSpawns = new Map<number, ObjectSpawnSnapshot>();
   private triggers = new Map<string, TriggerState>();
   private pendingEvents: SimEvent[] = [];
   private tick = 0;
@@ -76,6 +84,9 @@ export class SimulationCore {
   private replayCheckpoints: ReplayCheckpoint[] = [];
   private checkpointIntervalTicks = 0;
   private initialStateAtCapture = "";
+  private replayCmds: Map<number, CommandAction[]> | null = null;
+  private replayTotalTicks = 0;
+  private replayCompleted = false;
 
   constructor(arena: ArenaConfig, competition: CompetitionRuleset, profile: SimulationProfile) {
     this.arena = arena;
@@ -93,6 +104,10 @@ export class SimulationCore {
       this.physics.registerEntity(entityId, obj.body);
       this.worldObjects.push({ id: spawn.objectId, body: obj.body, collider: obj.collider });
       this.objectEntityIds.set(obj.collider.handle, entityId);
+      this.objectSpawns.set(obj.collider.handle, {
+        p: { x: spawn.pose.x, y: spawn.pose.y, z: spawn.pose.z },
+        q: { x: 0, y: 0, z: 0, w: 1 },
+      });
     }
     for (const t of arena.triggers ?? []) this.triggers.set(t.id, { inside: new Set() });
     this.bus.setHandler((action) => this.handleAction(action));
@@ -100,6 +115,10 @@ export class SimulationCore {
 
   private handleAction(action: CommandAction): boolean {
     if (this.inputGateEnabled && (action.kind === "axes" || action.kind === "grabToggle")) return false;
+    return this.applyAction(action);
+  }
+
+  private applyAction(action: CommandAction): boolean {
     switch (action.kind) {
       case "axes": {
         const slot = this.slots.get(action.slot);
@@ -313,6 +332,58 @@ export class SimulationCore {
     }
   }
 
+  resetObjectsToSpawns(): void {
+    for (const o of this.worldObjects) {
+      if (this.ownershipRef.isHeld(o.collider.handle)) continue;
+      const spawn = this.objectSpawns.get(o.collider.handle);
+      if (!spawn) continue;
+      o.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+      o.body.setTranslation(spawn.p, true);
+      o.body.setRotation(spawn.q, true);
+      o.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      o.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
+  resetForReplay(): void {
+    this.resetRobotsToSpawns();
+    this.resetObjectsToSpawns();
+    this.physics.resetAccumulator();
+    this.replayCmds = null;
+    this.replayCompleted = false;
+    this.tick = 0;
+    this.bus.resetQueue();
+  }
+
+  startReplayPlayback(file: ReplayFile): ReplayCompatibilityIssue[] {
+    this.resetForReplay();
+    const issues = checkReplayCompatibility(file, this.replayRuntimeInfo());
+    if (issues.length > 0) return issues;
+    const map = new Map<number, CommandAction[]>();
+    for (const c of file.commands) {
+      const list = map.get(c.tick) ?? [];
+      list.push(c.action);
+      map.set(c.tick, list);
+    }
+    this.replayCmds = map;
+    this.replayTotalTicks = file.totalTicks;
+    this.inputGateEnabled = true;
+    return [];
+  }
+
+  stopReplayPlayback(): void {
+    this.replayCmds = null;
+    this.inputGateEnabled = false;
+  }
+
+  isReplayPlaybackActive(): boolean {
+    return this.replayCmds !== null;
+  }
+
+  wasReplayPlaybackCompleted(): boolean {
+    return this.replayCompleted;
+  }
+
   slotTeam(slot: number): "red" | "blue" | undefined {
     return this.slots.get(slot)?.spec.team;
   }
@@ -334,6 +405,8 @@ export class SimulationCore {
   }
 
   private onFixedTick(): void {
+    const injected = this.replayCmds?.get(this.tick);
+    if (injected) for (const a of injected) this.applyAction(a);
     this.bus.setTick(this.tick);
     this.bus.drain();
     for (const [, slot] of this.slots) {
@@ -349,6 +422,10 @@ export class SimulationCore {
       this.replayCheckpoints.push({ tick: this.tick, hash: this.quantizedStateHash() });
     }
     this.tick += 1;
+    if (this.replayCmds && this.tick >= this.replayTotalTicks) {
+      this.stopReplayPlayback();
+      this.replayCompleted = true;
+    }
   }
 
   private evaluateTriggers(): void {

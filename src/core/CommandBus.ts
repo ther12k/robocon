@@ -87,6 +87,11 @@ export class CommandBus {
     this.currentTick = tick;
   }
 
+  resetQueue(): void {
+    this.queue = [];
+    this.lastDeliveredAxes.clear();
+  }
+
   get tick(): number {
     return this.currentTick;
   }
