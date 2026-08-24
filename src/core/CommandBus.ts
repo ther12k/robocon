@@ -8,6 +8,8 @@ export type CommandAction =
 export interface RecordedCommand {
   tick: number;
   action: CommandAction;
+  /** Set by drain(): true when the handler applied the action. */
+  ok?: boolean;
 }
 
 type Handler = (action: CommandAction, tick: number) => boolean | void;
@@ -51,6 +53,7 @@ export class CommandBus {
     this.queue = [];
     for (const entry of pending) {
       const applied = this.handler?.(entry.action, entry.tick);
+      entry.ok = applied !== false;
       this.markDelivered(entry.action, applied !== false);
     }
   }
@@ -72,7 +75,9 @@ export class CommandBus {
   stopRecording(): RecordedCommand[] {
     const h = this.history ?? [];
     this.history = null;
-    return h;
+    return h
+      .filter((entry) => entry.ok !== false)
+      .map((entry) => ({ tick: entry.tick, action: entry.action }));
   }
 
   isRecording(): boolean {

@@ -19,6 +19,8 @@ export interface ReplayFile {
   totalTicks: number;
   finalStateHash: string;
   commands: RecordedCommand[];
+  /** True when the recording session began with a match start. */
+  matchStarted?: boolean;
 }
 
 export interface ReplayRuntimeInfo {

@@ -291,7 +291,7 @@ export class SimulationCore {
     this.initialStateAtCapture = this.stateHash();
   }
 
-  endReplayCapture(): ReplayFile {
+  endReplayCapture(opts: { matchStarted?: boolean } = {}): ReplayFile {
     const commands = this.bus.stopRecording();
     const file: ReplayFile = {
       schemaVersion: REPLAY_SCHEMA_VERSION,
@@ -305,6 +305,7 @@ export class SimulationCore {
       totalTicks: this.tick,
       finalStateHash: this.stateHash(),
       commands,
+      ...(opts.matchStarted ? { matchStarted: true } : {}),
     };
     this.checkpointIntervalTicks = 0;
     this.initialStateAtCapture = "";

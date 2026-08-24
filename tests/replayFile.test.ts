@@ -9,6 +9,7 @@ import {
   type ReplayFile,
 } from "../src/core/replayFile";
 import { diffSpec, testArena, testCompetition, testProfile } from "./simulationCore.test";
+import { MatchController } from "../src/core/match";
 
 interface ScriptedStep {
   axes?: DriveCommand;
@@ -177,6 +178,57 @@ describe("versioned replay files (R1-06)", () => {
     expect(core.isReplayPlaybackActive()).toBe(false);
     expect(core.wasReplayPlaybackCompleted()).toBe(false);
     expect(core.replayDesync).toBe(victim.tick);
+  });
+
+  it("records and replays a full match session including the scoreboard outcome", async () => {
+    await RAPIER.init();
+    const competition = {
+      ...testCompetition,
+      match: { setupSec: 0.05, countdownSec: 0.05, playSec: 2, retriesPerTeam: 1 },
+    };
+
+    const core = new SimulationCore(testArena, competition, testProfile);
+    core.addRobot(0, diffSpec);
+    const match = new MatchController(core, competition);
+    core.resetForReplay();
+    core.beginReplayCapture(30);
+    match.startMatch();
+
+    for (let t = 0; t < 8; t++) {
+      core.setAxesFromInput(0, { fwd: 1, strafe: 1, turn: 1 });
+      core.advance(core.physics.fixedDt);
+    }
+    expect(match.phase).toBe("playing");
+
+    for (let t = 0; t < 60; t++) {
+      core.setAxesFromInput(0, { fwd: -1, strafe: 0, turn: t % 2 });
+      if (t === 5) core.enqueueGrabToggle(0);
+      core.advance(core.physics.fixedDt);
+    }
+    const file = core.endReplayCapture({ matchStarted: true });
+    expect(file.matchStarted).toBe(true);
+
+    const recordedScore = { ...match.score };
+    const recordedWinner = match.winner;
+    const recordedEntries = match.entries.map((e) => [e.tick, e.kind, e.team ?? "", e.ruleId]);
+
+    const replayCore = new SimulationCore(testArena, competition, testProfile);
+    replayCore.addRobot(0, diffSpec);
+    const replayMatch = new MatchController(replayCore, competition);
+    replayMatch.startMatch();
+    expect(replayCore.startReplayPlayback(file)).toEqual([]);
+    let guard = 0;
+    while (replayCore.isReplayPlaybackActive() && guard++ < file.totalTicks * 3) {
+      replayCore.advance(file.fixedDt);
+    }
+    expect(replayCore.wasReplayPlaybackCompleted()).toBe(true);
+    expect(replayCore.replayDesync).toBeNull();
+    expect(replayCore.stateHash()).toBe(file.finalStateHash);
+    expect({ ...replayMatch.score }).toEqual(recordedScore);
+    expect(replayMatch.winner).toBe(recordedWinner);
+    expect(replayMatch.entries.map((e) => [e.tick, e.kind, e.team ?? "", e.ruleId])).toEqual(
+      recordedEntries,
+    );
   });
 
   it("rejects replays whose config, engine, or initial state no longer match", async () => {

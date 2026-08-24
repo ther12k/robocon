@@ -53,6 +53,7 @@ const btnReplay = document.getElementById("btn-replay") as HTMLButtonElement;
 const replayPanel = document.getElementById("replay-panel")!;
 const replayCloseBtn = document.getElementById("replay-close")!;
 const replayRecordBtn = document.getElementById("replay-record") as HTMLButtonElement;
+const replayRecordMatchBtn = document.getElementById("replay-record-match") as HTMLButtonElement;
 const replayPlayBtn = document.getElementById("replay-play") as HTMLButtonElement;
 const replayStopBtn = document.getElementById("replay-stop") as HTMLButtonElement;
 const replayLoadBtn = document.getElementById("replay-load") as HTMLButtonElement;
@@ -229,6 +230,7 @@ type ReplayUiState = "idle" | "recording" | "playing";
 
 let replayUi: ReplayUiState = "idle";
 let replayLoadedFile: ReplayFile | null = null;
+let replayRecordingMatch = false;
 
 function setReplayStatus(entries: Array<{ cls: string; text: string }>): void {
   replayStatusEl.innerHTML = entries.map((e) => `<span class="${e.cls}">${e.text}</span>`).join("");
@@ -237,9 +239,12 @@ function setReplayStatus(entries: Array<{ cls: string; text: string }>): void {
 function updateReplayButtons(): void {
   const recording = replayUi === "recording";
   const playing = replayUi === "playing";
-  replayRecordBtn.classList.toggle("recording", recording);
-  replayRecordBtn.textContent = recording ? "■ Stop & Export" : "● Record";
+  replayRecordBtn.classList.toggle("recording", recording && !replayRecordingMatch);
+  replayRecordBtn.textContent = recording && !replayRecordingMatch ? "■ Stop & Export" : "● Record";
+  replayRecordMatchBtn.classList.toggle("recording", recording && replayRecordingMatch);
+  replayRecordMatchBtn.textContent = recording && replayRecordingMatch ? "■ Stop & Export" : "● Record Match";
   replayRecordBtn.disabled = playing;
+  replayRecordMatchBtn.disabled = playing;
   replayPlayBtn.disabled = playing || recording || !replayLoadedFile;
   replayStopBtn.disabled = !playing;
   replayLoadBtn.disabled = playing || recording;
@@ -259,9 +264,23 @@ function startReplayRecording(): void {
   if (!core || replayUi !== "idle" || !requireIdleMatch()) return;
   core.resetForReplay();
   core.beginReplayCapture(60);
+  replayRecordingMatch = false;
   replayUi = "recording";
   updateReplayButtons();
   setReplayStatus([{ cls: "warn", text: "recording from spawn reset — drive, then Stop & Export" }]);
+}
+
+function startMatchRecording(): void {
+  if (!core || !match || replayUi !== "idle" || !requireIdleMatch()) return;
+  core.resetForReplay();
+  core.beginReplayCapture(60);
+  match.startMatch();
+  replayRecordingMatch = true;
+  replayUi = "recording";
+  updateReplayButtons();
+  scoreboardEl.hidden = false;
+  matchBanner.hidden = true;
+  setReplayStatus([{ cls: "warn", text: "recording match from kickoff — scoreboard will reproduce on playback" }]);
 }
 
 function downloadJson(data: unknown, filename: string): void {
@@ -274,10 +293,11 @@ function downloadJson(data: unknown, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-function stopReplayRecording(opts: { download: boolean } = { download: true }): ReplayFile | null {
+function stopReplayRecording(opts: { download?: boolean } = {}): ReplayFile | null {
   if (!core || replayUi !== "recording") return null;
-  const file = core.endReplayCapture();
+  const file = core.endReplayCapture({ matchStarted: replayRecordingMatch });
   replayLoadedFile = file;
+  replayRecordingMatch = false;
   replayUi = "idle";
   updateReplayButtons();
   if (opts.download) downloadJson(file, `robocon-replay-${Date.now()}.json`);
@@ -329,6 +349,13 @@ function loadReplayText(text: string): { ok: boolean } {
 
 function playReplay(): void {
   if (!core || !replayLoadedFile || replayUi !== "idle" || !requireIdleMatch()) return;
+  if (replayLoadedFile.matchStarted) {
+    if (!match) {
+      setReplayStatus([{ cls: "err", text: "this replay needs a match session — match controller unavailable" }]);
+      return;
+    }
+    match.startMatch();
+  }
   const issues = core.startReplayPlayback(replayLoadedFile);
   if (issues.length > 0) {
     setReplayStatus(issues.map((i) => ({ cls: "err", text: `${i.field}: ${i.message}` })));
@@ -356,6 +383,12 @@ replayRecordBtn.addEventListener("click", () => {
   if (phase !== "ready") return;
   if (replayUi === "recording") stopReplayRecording();
   else startReplayRecording();
+});
+
+replayRecordMatchBtn.addEventListener("click", () => {
+  if (phase !== "ready") return;
+  if (replayUi === "recording" && replayRecordingMatch) stopReplayRecording();
+  else startMatchRecording();
 });
 
 replayLoadBtn.addEventListener("click", () => replayFileInput.click());
@@ -712,6 +745,7 @@ interface SimProbe {
   __sim_validateSpecText(text: string): unknown;
   __sim_replayState(): ReplayUiState;
   __sim_replayRecordToggle(): void;
+  __sim_replayRecordMatchToggle(): void;
   __sim_replayStopExport(): unknown;
   __sim_replayLoadText(text: string): { ok: boolean };
   __sim_replayPlay(): { ok: boolean };
@@ -744,6 +778,7 @@ function installProbe(): void {
   };
   w.__sim_replayState = () => replayUi;
   w.__sim_replayRecordToggle = () => replayRecordBtn.click();
+  w.__sim_replayRecordMatchToggle = () => replayRecordMatchBtn.click();
   w.__sim_replayStopExport = () => stopReplayRecording({ download: false });
   w.__sim_replayLoadText = (text: string) => loadReplayText(text);
   w.__sim_replayPlay = () => {

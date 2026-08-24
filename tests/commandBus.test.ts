@@ -71,6 +71,21 @@ describe("CommandBus (R1-02)", () => {
     expect(history).toHaveLength(1);
     expect(bus.isRecording()).toBe(false);
   });
+
+  it("excludes handler-rejected actions from stopRecording output", () => {
+    const bus = new CommandBus();
+    bus.setHandler((action) => action.kind !== "grabToggle");
+    bus.startRecording();
+    bus.enqueue({ kind: "axes", slot: 0, payload: { fwd: 1, strafe: 0, turn: 0 } }, { tick: 3 });
+    bus.enqueue({ kind: "grabToggle", slot: 0 }, { tick: 4 });
+    bus.drain();
+
+    const history = bus.stopRecording();
+    expect(history).toHaveLength(1);
+    expect(history[0].tick).toBe(3);
+    expect(history[0].action.kind).toBe("axes");
+    expect(history[0].ok).toBeUndefined();
+  });
 });
 
 describe("schema version gate (R1-04)", () => {
