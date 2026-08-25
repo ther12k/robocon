@@ -135,8 +135,11 @@ export class AutonomyManager {
     const m = msg as WorkerOut;
     this.lastSeen.set(boundSlot, Date.now());
     this.awaitingTick.delete(boundSlot);
-    // Only actual commands count toward the spam limit — heartbeats/logs are
-    // control traffic and arrive in bursts on slow renderers.
+    // Command spam window = between successive heartbeats (i.e. per sim tick).
+    // Heartbeat/log/ready control traffic never counts toward the limit.
+    if (m.type === "heartbeat") {
+      this.msgCount.delete(boundSlot);
+    }
     if (m.type === "axes" || m.type === "grabToggle" || m.type === "release") {
       const count = (this.msgCount.get(boundSlot) ?? 0) + 1;
       this.msgCount.set(boundSlot, count);
@@ -233,7 +236,6 @@ export class AutonomyManager {
   }
 
   private pump(): void {
-    this.msgCount.clear();
     for (const [slot, host] of this.hosts) {
       const frame = buildSenseFrame(this.core, slot, this.sensorOpts);
       if (!frame) continue;
