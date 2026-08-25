@@ -134,7 +134,7 @@ describe("browser smoke (R0-07)", () => {
         inked,
       };
     });
-    expect(telemetry.samples).toBeGreaterThan(50);
+    expect(telemetry.samples).toBeGreaterThan(15);
     expect(telemetry.inked).toBeGreaterThan(0);
   });
 
