@@ -72,6 +72,7 @@ const robotDriveEl = document.getElementById("robot-drive")!;
 const robotPoseEl = document.getElementById("robot-pose")!;
 const robotSpeedEl = document.getElementById("robot-speed")!;
 const robotGripEl = document.getElementById("robot-grip")!;
+const telemetryCanvas = document.getElementById("telemetry-canvas") as HTMLCanvasElement;
 
 const controlButtons = [btnMatchStart, btnReplay, btnTopView, btnMeasure, btnFollow, btnResetCam, btnBuilder, btnAutonomy];
 for (const b of controlButtons) b.disabled = true;
@@ -428,6 +429,57 @@ function updateRobotPanel(): void {
   }
 }
 
+const TELEMETRY_POINTS = 240;
+const telemetryBuf = new Float32Array(TELEMETRY_POINTS);
+let telemetryLen = 0;
+const telemetryCtx: CanvasRenderingContext2D | null = telemetryCanvas.getContext("2d");
+
+function sizeTelemetryCanvas(): void {
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = telemetryCanvas.clientWidth || 260;
+  telemetryCanvas.width = Math.round(cssWidth * dpr);
+  telemetryCanvas.height = Math.round(56 * dpr);
+  telemetryCtx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function pushTelemetry(speed: number): void {
+  if (telemetryLen < TELEMETRY_POINTS) {
+    telemetryBuf[telemetryLen++] = speed;
+  } else {
+    telemetryBuf.copyWithin(0, 1);
+    telemetryBuf[TELEMETRY_POINTS - 1] = speed;
+  }
+}
+
+function drawTelemetry(): void {
+  const ctx = telemetryCtx;
+  if (!ctx) return;
+  const w = telemetryCanvas.clientWidth || 260;
+  const h = 56;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, h - 1);
+  ctx.lineTo(w, h - 1);
+  ctx.stroke();
+  if (telemetryLen < 2) return;
+  let max = 1;
+  for (let i = 0; i < telemetryLen; i++) {
+    if (telemetryBuf[i] > max) max = telemetryBuf[i];
+  }
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < telemetryLen; i++) {
+    const x = (i / (TELEMETRY_POINTS - 1)) * w;
+    const y = h - 2 - (telemetryBuf[i] / max) * (h - 6);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
 let lastScoreboardFingerprint = "";
 let bannerShownForPhase = "";
 
@@ -503,7 +555,10 @@ function onResize(): void {
   rig.resize(w, h);
 }
 
-window.addEventListener("resize", onResize);
+window.addEventListener("resize", () => {
+  onResize();
+  sizeTelemetryCanvas();
+});
 
 canvas.addEventListener("pointerdown", (e) => {
   if (phase !== "ready" || !measure || !rig || !floorMesh) return;
@@ -674,6 +729,7 @@ async function main(): Promise<void> {
   builder.selectSlot(0);
 
   onResize();
+  sizeTelemetryCanvas();
   setPhase("ready");
   installProbe();
 
@@ -723,6 +779,11 @@ async function main(): Promise<void> {
         fpsAccum = 0;
       }
       updateRobotPanel();
+      if (core?.hasSlot(activeSlot)) {
+        const v = core.getBody(activeSlot)!.linvel();
+        pushTelemetry(Math.hypot(v.x, v.z));
+        drawTelemetry();
+      }
       updateScoreboard();
       if (autonomy && !scriptPanel.hidden) {
         setScriptStatus(autonomy.status(activeSlot));
@@ -754,6 +815,7 @@ interface SimProbe {
   __sim_replayStopExport(): unknown;
   __sim_replayLoadText(text: string): { ok: boolean };
   __sim_replayPlay(): { ok: boolean };
+  __sim_telemetryCount(): number;
 }
 
 function installProbe(): void {
@@ -790,6 +852,7 @@ function installProbe(): void {
     playReplay();
     return { ok: replayUi === "playing" };
   };
+  w.__sim_telemetryCount = () => telemetryLen;
 }
 
 main().catch((err) => {

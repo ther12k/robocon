@@ -193,6 +193,13 @@ html, body {
 #robot-panel .mono { font-family: ui-monospace, monospace; font-size: 12px; }
 #robot-panel .big { font-size: 16px; color: var(--accent); margin-top: 4px; }
 #robot-panel .hint { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
+#telemetry-canvas {
+  width: 100%;
+  height: 56px;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+}
 
 #builder-panel {
   position: absolute;

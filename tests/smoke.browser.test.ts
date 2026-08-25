@@ -19,6 +19,7 @@ interface SimProbe {
   } | null;
   __sim_replayLoadText(text: string): { ok: boolean };
   __sim_replayPlay(): { ok: boolean };
+  __sim_telemetryCount(): number;
 }
 
 const PORT = 4173;
@@ -119,6 +120,20 @@ describe("browser smoke (R0-07)", () => {
     expect(displacement).toBeGreaterThan(1);
     expect(Math.hypot(after.mesh.x - after.body.x, after.mesh.z - after.body.z)).toBeLessThan(0.05);
     expect(after.speed).toBeLessThan(0.75);
+
+    const telemetry = await page.evaluate(() => {
+      const canvas = document.getElementById("telemetry-canvas") as HTMLCanvasElement;
+      const ctx = canvas.getContext("2d")!;
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let inked = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) inked++;
+      return {
+        samples: (window as unknown as SimProbe).__sim_telemetryCount(),
+        inked,
+      };
+    });
+    expect(telemetry.samples).toBeGreaterThan(50);
+    expect(telemetry.inked).toBeGreaterThan(0);
   });
 
   it("grab -> release -> re-grab works in the live app", async (ctx) => {

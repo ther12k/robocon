@@ -44,6 +44,7 @@
         <div id="robot-drive" class="muted">—</div>
         <div id="robot-pose" class="mono">—</div>
         <div id="robot-speed" class="big mono">0.00 m/s</div>
+        <canvas id="telemetry-canvas" height="56"></canvas>
         <div id="robot-grip" class="hint mono" hidden></div>
         <p class="hint">W/S drive · A/D strafe (holonomic) · Q/E rotate · Space grab</p>
       </div>
@@ -101,7 +102,7 @@
 
       <footer id="statusbar">
         <span id="fps">— fps</span>
-        <span id="hint">Drag = orbit · Wheel = zoom · T top · M measure · F follow · B builder · Tab robot · Space grab</span>
+        <span id="hint">Drag = orbit · Wheel = zoom · T top · M measure · F follow · B builder · V autonomy · Tab robot · Space grab</span>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
