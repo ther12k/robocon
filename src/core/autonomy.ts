@@ -135,7 +135,16 @@ export class AutonomyManager {
     const m = msg as WorkerOut;
     this.lastSeen.set(boundSlot, Date.now());
     this.awaitingTick.delete(boundSlot);
-    this.everResponded.add(boundSlot);
+    // Only actual commands count toward the spam limit — heartbeats/logs are
+    // control traffic and arrive in bursts on slow renderers.
+    if (m.type === "axes" || m.type === "grabToggle" || m.type === "release") {
+      const count = (this.msgCount.get(boundSlot) ?? 0) + 1;
+      this.msgCount.set(boundSlot, count);
+      if (count > MAX_MESSAGES_PER_TICK) {
+        this.kill(boundSlot, "command spam limit exceeded");
+        return;
+      }
+    }
     switch (m.type) {
       case "ready":
         if (this.states.get(boundSlot)?.status === "booting") {

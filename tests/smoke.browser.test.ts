@@ -229,10 +229,14 @@ describe("browser smoke (R0-07)", () => {
     expect(file!.schemaVersion).toBe(REPLAY_SCHEMA_VERSION);
     expect(file!.commands.length).toBeGreaterThan(0);
 
-    const loadResult = await page.evaluate(
-      (text) => (window as unknown as SimProbe).__sim_replayLoadText(text),
-      JSON.stringify(file),
-    );
+    const loadResult = await page.evaluate((text) => {
+      const res = (window as unknown as SimProbe).__sim_replayLoadText(text);
+      const status = document.getElementById("replay-status")!.textContent ?? "";
+      return { ...res, status };
+    }, JSON.stringify(file));
+    if (!loadResult.ok) {
+      console.log("LOAD FAILED STATUS:", loadResult.status);
+    }
     expect(loadResult.ok).toBe(true);
 
     const link = await page.evaluate(
@@ -315,14 +319,16 @@ describe("browser smoke (R0-07)", () => {
     const evil = JSON.stringify({
       schemaVersion: REPLAY_SCHEMA_VERSION,
       engineVersion: '<img src=x onerror="document.body.dataset.pwned=2">',
-      physicsVersion: "0",
+      physicsVersion: "ci",
+      buildId: "abcdef123456",
+      wasmHash: "1234567890ab",
       fixedDt: 1 / 60,
       configHashes: {},
-      initialStateHash: "deadbeef",
+      initialStateHash: "00000000",
       checkpointIntervalTicks: 60,
       checkpoints: [],
       totalTicks: 1,
-      finalStateHash: "beefcafe",
+      finalStateHash: "00000000",
       commands: [],
     });
     await page.evaluate(
