@@ -20,6 +20,7 @@ interface SimProbe {
   __sim_replayLoadText(text: string): { ok: boolean };
   __sim_replayPlay(): { ok: boolean };
   __sim_telemetryCount(): number;
+  __sim_replayShareLink(): Promise<string | null>;
 }
 
 const PORT = 4173;
@@ -42,6 +43,7 @@ beforeAll(async () => {
       args: ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
     });
     page = await browser.newPage();
+    page.setDefaultTimeout(15000);
     await page.setViewport({ width: 1280, height: 800 });
     browserAvailable = true;
   } catch (e) {
@@ -226,6 +228,15 @@ describe("browser smoke (R0-07)", () => {
       JSON.stringify(file),
     );
     expect(loadResult.ok).toBe(true);
+
+    const link = await page.evaluate(
+      () => (window as unknown as SimProbe).__sim_replayShareLink(),
+    );
+    expect(link).not.toBeNull();
+    const hashIndex = link!.indexOf("#r=");
+    expect(hashIndex).toBeGreaterThan(-1);
+    expect("zp").toContain(link![hashIndex + 3]);
+    expect(link!.length).toBeGreaterThan(100);
 
     const playResult = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayPlay());
     expect(playResult.ok).toBe(true);

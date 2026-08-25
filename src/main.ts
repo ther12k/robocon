@@ -15,6 +15,10 @@ import { AutonomyManager, type AutonomyState } from "./core/autonomy";
 import { createBrowserHostFactory } from "./core/browserHost";
 import { checkSchemaVersion } from "./core/schemas";
 import { type ReplayFile } from "./core/replayFile";
+import {
+  buildReplayShareUrl,
+  replayFromHash,
+} from "./core/replayShare";
 import { buildRobotMesh } from "./sim/robot/RobotVisual";
 import { InputManager } from "./sim/input/InputManager";
 import { RobotBuilderPanel } from "./ui/RobotBuilderPanel";
@@ -57,6 +61,7 @@ const replayRecordMatchBtn = document.getElementById("replay-record-match") as H
 const replayPlayBtn = document.getElementById("replay-play") as HTMLButtonElement;
 const replayStopBtn = document.getElementById("replay-stop") as HTMLButtonElement;
 const replayLoadBtn = document.getElementById("replay-load") as HTMLButtonElement;
+const replayShareBtn = document.getElementById("replay-share") as HTMLButtonElement;
 const replayFileInput = document.getElementById("replay-file") as HTMLInputElement;
 const replayStatusEl = document.getElementById("replay-status")!;
 const scoreboardEl = document.getElementById("scoreboard")!;
@@ -249,6 +254,7 @@ function updateReplayButtons(): void {
   replayPlayBtn.disabled = playing || recording || !replayLoadedFile;
   replayStopBtn.disabled = !playing;
   replayLoadBtn.disabled = playing || recording;
+  replayShareBtn.disabled = playing || recording || !replayLoadedFile;
 }
 
 function requireIdleMatch(): boolean {
@@ -393,6 +399,45 @@ replayRecordMatchBtn.addEventListener("click", () => {
 });
 
 replayLoadBtn.addEventListener("click", () => replayFileInput.click());
+
+async function copyReplayLink(): Promise<void> {
+  if (!replayLoadedFile) return;
+  const url = await buildReplayShareUrl(replayLoadedFile, `${location.origin}${location.pathname}`);
+  const sizeKb = Math.round(url.length / 1024);
+  let copied = true;
+  try {
+    await Promise.race([
+      navigator.clipboard.writeText(url),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("clipboard timeout")), 1500)),
+    ]);
+  } catch {
+    copied = false;
+  }
+  if (copied) {
+    setReplayStatus([{ cls: "ok", text: `share link copied (${sizeKb} KB)` }]);
+  } else {
+    window.prompt("Copy this replay link:", url);
+    setReplayStatus([{ cls: "warn", text: "clipboard unavailable — link shown in a prompt" }]);
+  }
+}
+
+replayShareBtn.addEventListener("click", () => {
+  void copyReplayLink();
+});
+
+async function autoloadFromHash(): Promise<void> {
+  try {
+    const file = await replayFromHash(location.hash);
+    if (file && loadReplayText(JSON.stringify(file)).ok) {
+      replayPanel.hidden = false;
+      btnReplay.classList.add("active");
+      input.setContext("ui");
+    }
+  } catch (err) {
+    setReplayStatus([{ cls: "err", text: `share link invalid: ${String(err)}` }]);
+  }
+}
+void autoloadFromHash();
 
 replayFileInput.addEventListener("change", () => {
   const file = replayFileInput.files?.[0];
@@ -816,6 +861,7 @@ interface SimProbe {
   __sim_replayLoadText(text: string): { ok: boolean };
   __sim_replayPlay(): { ok: boolean };
   __sim_telemetryCount(): number;
+  __sim_replayShareLink(): Promise<string | null>;
 }
 
 function installProbe(): void {
@@ -853,6 +899,10 @@ function installProbe(): void {
     return { ok: replayUi === "playing" };
   };
   w.__sim_telemetryCount = () => telemetryLen;
+  w.__sim_replayShareLink = async () =>
+    replayLoadedFile
+      ? buildReplayShareUrl(replayLoadedFile, `${location.origin}${location.pathname}`)
+      : null;
 }
 
 main().catch((err) => {
