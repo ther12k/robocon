@@ -8,6 +8,8 @@ export interface BuilderPanelOptions {
   slotLabel: (index: number) => string;
   getSpecText: (index: number) => string;
   onApply: (index: number, spec: RobotSpec) => void;
+  /** Runs BEFORE any state mutation; error-level issues block the apply. */
+  preApplyIssues?: (index: number, spec: RobotSpec) => ValidationIssue[];
   postApplyIssues?: (index: number) => ValidationIssue[];
 }
 
@@ -129,6 +131,12 @@ export class RobotBuilderPanel {
   private apply(): void {
     const result = this.runValidation();
     if (!result?.spec) return;
+    const blocking = this.opts.preApplyIssues?.(this.activeSlot, result.spec) ?? [];
+    const errors = blocking.filter((i) => i.level === "error");
+    if (errors.length > 0) {
+      this.showIssues(errors);
+      return;
+    }
     this.opts.onApply(this.activeSlot, result.spec);
     const extra = this.opts.postApplyIssues?.(this.activeSlot) ?? [];
     this.showIssues(

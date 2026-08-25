@@ -49,6 +49,10 @@ beforeAll(async () => {
     await page.setViewport({ width: 1280, height: 800 });
     browserAvailable = true;
   } catch (e) {
+    if (process.env.CI) {
+      // In CI a missing browser is an environment failure, not a skippable case.
+      throw e;
+    }
     console.warn(`smoke environment unavailable, skipping: ${String(e)}`);
     await browser?.close();
     browser = null;

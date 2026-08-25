@@ -376,7 +376,9 @@ function loadReplayText(text: string): { ok: boolean } {
 }
 
 function playReplay(): void {
-  if (!core || !replayLoadedFile || replayUi !== "idle" || !requireIdleMatch()) return;
+  if (!core || !replayLoadedFile || replayUi !== "idle") return;
+  if (match && match.phase === "ended") match.resetMatchToIdle(); // allow instant replay after a match
+  if (!requireIdleMatch()) return;
   if (replayLoadedFile.matchStarted && !match) {
     setReplayStatus([{ cls: "err", text: "this replay needs a match session — match controller unavailable" }]);
     return;
@@ -706,18 +708,20 @@ btnBuilder.addEventListener("click", () => {
 window.addEventListener("keydown", (e) => {
   if (phase !== "ready") return;
   const targetEditable =
-    e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
+    e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement ||
+    (e.target instanceof HTMLElement && e.target.isContentEditable);
+  // Typing must never trigger global shortcuts — except Escape, which always
+  // cancels/closes whatever context the user is in.
+  if (targetEditable && e.key !== "Escape") return;
   if (e.key === `Enter`) {
     startMatch();
     return;
   }
   if (e.key === "b" || e.key === "B") {
-    if (targetEditable) return;
     btnBuilder.click();
     return;
   }
   if (e.key === "v" || e.key === "V") {
-    if (targetEditable) return;
     btnAutonomy.click();
     return;
   }
@@ -729,7 +733,6 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (targetEditable) return;
   if (e.key === "t" || e.key === "T") {
     btnTopView.classList.toggle("active", rig?.toggleTopView() ?? false);
   } else if (e.key === "m" || e.key === "M") {
@@ -809,6 +812,11 @@ async function main(): Promise<void> {
     slotLabel: (i) => `S${i + 1}: ${core?.getSpec(i)?.name ?? "?"}`,
     getSpecText: (i) => JSON.stringify(core?.getSpec(i) ?? {}, null, 2),
     onApply: (slot, spec) => spawnSlot(slot, spec),
+    preApplyIssues: (slot, spec) =>
+      validateTeamMass(
+        presetSlots().map((i) => (i === slot ? spec : core?.getSpec(i))),
+        competition.teamWeightBudgetKg,
+      ),
     postApplyIssues: () =>
       validateTeamMass(
         presetSlots().map((i) => core?.getSpec(i)),

@@ -111,11 +111,13 @@ describe("specValidator hardening (R0-06)", () => {
     expect(issues.some((i) => i.field === "chassis.maxSpeedMps")).toBe(true);
   });
 
-  it("warns on unsupported schemaVersion but still validates", () => {
+  it("rejects unsupported schemaVersion as a blocking error", () => {
     const versioned = { ...valid, schemaVersion: 99 };
     const { spec, issues } = validateSpec(versioned, ruleset);
-    expect(spec).toBeDefined();
-    expect(issues.some((i) => i.field === "schemaVersion")).toBe(true);
+    expect(spec).toBeUndefined();
+    const issue = issues.find((i) => i.field === "schemaVersion");
+    expect(issue).toBeDefined();
+    expect(issue!.level).toBe("error");
   });
 });
 

@@ -63,9 +63,9 @@ export function validateSpec(raw: unknown, ctx: ValidationContext): ValidationRe
 
   if (o.schemaVersion !== undefined && o.schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
     issues.push({
-      level: "warning",
+      level: "error",
       field: "schemaVersion",
-      message: `unsupported schemaVersion ${String(o.schemaVersion)}; expected ${SUPPORTED_SCHEMA_VERSION}`,
+      message: `unsupported schemaVersion ${String(o.schemaVersion)}; expected ${SUPPORTED_SCHEMA_VERSION} — refusing to apply a spec written for another schema`,
     });
   }
 

@@ -72,6 +72,9 @@ export class MatchController {
   }
 
   startMatch(): void {
+    if (this._phase === "setup" || this._phase === "countdown" || this._phase === "playing") {
+      return; // a match is already in flight — ignore restart spam
+    }
     const match = this.rules.match ?? { setupSec: 60, playSec: 180, retriesPerTeam: 3 };
     this._phase = "setup";
     this.scores = { red: 0, blue: 0 };
@@ -83,6 +86,18 @@ export class MatchController {
     this.core.resetForReplay();
     this.core.inputGateEnabled = true;
     this.setPhase("setup", match.setupSec, `Match started — setup ${match.setupSec}s`);
+  }
+
+  /** Returns the match to a clean idle state (scores cleared, gate open). */
+  resetMatchToIdle(): void {
+    this._phase = "idle";
+    this.ticksLeftInPhase = 0;
+    this.scores = { red: 0, blue: 0 };
+    this.winnerTeam = null;
+    this.log = [];
+    this.scoredKeys.clear();
+    this.matchTick = 0;
+    this.core.inputGateEnabled = false;
   }
 
   private setPhase(phase: MatchPhase, durationSec: number, message: string): void {
