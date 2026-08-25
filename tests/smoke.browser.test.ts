@@ -172,8 +172,52 @@ describe("browser smoke (R0-07)", () => {
     await pressSpace();
   });
 
-  it("typing in the builder JSON editor does not drive the robot", async (ctx) => {
+  it("builder presets validate and apply without exceptions for both slots", async (ctx) => {
     ctx.skip(!browserAvailable, "chrome unavailable");
+    await forceClosePanels();
+
+    await page.click("#btn-builder");
+
+    const clickButtonByText = (text: string) =>
+      page.evaluate((label) => {
+        const buttons = [
+          ...document.querySelectorAll("#builder-panel button"),
+        ] as HTMLButtonElement[];
+        const target = buttons.find((b) => b.textContent?.trim() === label);
+        if (!target) throw new Error(`button not found: ${label}`);
+        target.click();
+      }, text);
+
+    for (const slot of [0, 1]) {
+      await page.evaluate((s) => {
+        const tabs = [...document.querySelectorAll("#builder-panel .builder-tabs button, #builder-panel button")] as HTMLButtonElement[];
+        const tab = tabs.find((b) => b.textContent?.trim() === `S${s + 1}` || b.textContent?.trim().startsWith(`S${s + 1}:`));
+        if (tab) tab.click();
+      }, slot);
+      await new Promise((r) => setTimeout(r, 80));
+
+      await clickButtonByText("Validate");
+      await new Promise((r) => setTimeout(r, 80));
+      let issues = await page.evaluate(
+        () => document.querySelector("#builder-panel .builder-issues")!.textContent ?? "",
+      );
+      expect(issues).toContain("Valid");
+      expect(issues).not.toContain("✖");
+
+      await clickButtonByText("Apply ▶");
+      await new Promise((r) => setTimeout(r, 150));
+      issues = await page.evaluate(
+        () => document.querySelector("#builder-panel .builder-issues")!.textContent ?? "",
+      );
+      expect(issues).toContain("Applied & respawned");
+    }
+
+    await page.evaluate(() => {
+      (document.getElementById("btn-builder") as HTMLButtonElement).click();
+    });
+  });
+
+  it("typing in the builder JSON editor does not drive the robot", async (ctx) => {    ctx.skip(!browserAvailable, "chrome unavailable");
     await page.click("#btn-builder");
     await new Promise((r) => setTimeout(r, 100));
 

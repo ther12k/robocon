@@ -181,6 +181,11 @@ export class RobotBuilderPanel {
   private loadFile(input: HTMLInputElement): void {
     const file = input.files?.[0];
     if (!file) return;
+    if (file.size > 256 * 1024) {
+      this.showIssues([{ level: "error", field: "", message: `robot file too large (${Math.round(file.size / 1024)} KB, limit 256 KB)` }]);
+      input.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       this.textarea.value = String(reader.result ?? "");

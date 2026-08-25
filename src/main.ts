@@ -28,6 +28,11 @@ import { InputManager } from "./sim/input/InputManager";
 import { RobotBuilderPanel } from "./ui/RobotBuilderPanel";
 import { yawFromQuaternion } from "./sim/orientation";
 import { validateTeamMass, validateSpec } from "./sim/specValidator";
+import {
+  validateArenaRuntime,
+  validateCompetitionRulesetRuntime,
+  validateSimulationProfileRuntime,
+} from "./sim/runtimeConfig";
 
 type AppPhase = "loading" | "ready" | "failed";
 
@@ -145,6 +150,12 @@ async function loadJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+function assertConfigOk(kind: string, errors: string[]): void {
+  if (errors.length > 0) {
+    throw new Error(`${kind} configuration invalid: ${errors.join("; ")}`);
+  }
+}
+
 function setMeasureHud(text: string | null): void {
   if (text === null) {
     measureHud.hidden = true;
@@ -231,6 +242,11 @@ scriptLoadBtn.addEventListener("click", () => scriptFileInput.click());
 scriptFileInput.addEventListener("change", () => {
   const file = scriptFileInput.files?.[0];
   if (!file) return;
+  if (file.size > 512 * 1024) {
+    setScriptStatus({ status: "error", detail: `script too large (${Math.round(file.size / 1024)} KB, limit 512 KB)` });
+    scriptFileInput.value = "";
+    return;
+  }
   const reader = new FileReader();
   reader.onload = () => {
     scriptCodeEl.value = String(reader.result ?? "");
@@ -330,8 +346,15 @@ function downloadJson(data: unknown, filename: string): void {
 function stopReplayRecording(opts: { download?: boolean } = {}): ReplayFile | null {
   if (!core || replayUi !== "recording") return null;
   const file = core.endReplayCapture({ matchStarted: replayRecordingMatch });
-  replayLoadedFile = file;
   replayRecordingMatch = false;
+  if (file.totalTicks === 0) {
+    updateReplayButtons();
+    setReplayStatus([
+      { cls: "err", text: "recording captured 0 ticks — drive at least one step before stopping" },
+    ]);
+    return null;
+  }
+  replayLoadedFile = file;
   replayUi = "idle";
   updateReplayButtons();
   if (opts.download) downloadJson(file, `robocon-replay-${Date.now()}.json`);
@@ -488,6 +511,11 @@ function applyPendingSharedFile(): void {
 replayFileInput.addEventListener("change", () => {
   const file = replayFileInput.files?.[0];
   if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    setReplayStatus([{ cls: "err", text: `replay file too large (${Math.round(file.size / 1024)} KB, limit 8192 KB)` }]);
+    replayFileInput.value = "";
+    return;
+  }
   const reader = new FileReader();
   reader.onload = () => loadReplayText(String(reader.result ?? ""));
   reader.readAsText(file);
@@ -761,6 +789,12 @@ async function main(): Promise<void> {
     const check = checkSchemaVersion(kind, data);
     if (!check.ok) throw new Error(`${kind}: unsupported schemaVersion ${check.found}`);
   }
+
+  // Runtime structural validation — a TypeScript cast alone lets broken
+  // configs reach the UI as undefined fields.
+  assertConfigOk("arena", validateArenaRuntime(arena));
+  assertConfigOk("competition ruleset", validateCompetitionRulesetRuntime(competition));
+  assertConfigOk("simulation profile", validateSimulationProfileRuntime(profile));
 
   validationCtx = {
     roles: competition.robots,

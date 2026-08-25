@@ -83,7 +83,8 @@ export interface ObjectSpawnDef {
   objectId: string;
   typeId: string;
   pose: { x: number; y: number; z: number };
-  initialState: "idle" | "held" | "scored";
+  /** Only "idle" is supported; scored/held spawns await schema evolution. */
+  initialState: "idle";
   massKg?: number;
   render?: ObjectRenderDef;
 }

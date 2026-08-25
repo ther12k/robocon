@@ -33,5 +33,32 @@
       "marginM": 0.25,
       "effect": "retry"
     }
-  ]
+  ],
+  "robots": {
+    "R1": {
+      "maxFootprintMm": {
+        "w": 600,
+        "l": 700,
+        "h": 400
+      },
+      "extendedMm": {
+        "w": 700,
+        "l": 800,
+        "h": 600
+      }
+    },
+    "R2": {
+      "maxFootprintMm": {
+        "w": 600,
+        "l": 700,
+        "h": 400
+      },
+      "extendedMm": {
+        "w": 700,
+        "l": 800,
+        "h": 600
+      }
+    }
+  },
+  "provenance": "provisional \u2014 role constraints mirror shipped presets pending official rulebook"
 }
