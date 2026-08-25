@@ -1,5 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import type { ArenaConfig, CompetitionRuleset, DriveCommand, RobotSpec, SimulationProfile } from "../sim/types";
+import type { ArenaConfig, CompetitionRuleset, DriveCommand, RobotSpec, SimulationProfile, Team } from "../sim/types";
+import { quatFromEulerYXZ } from "../sim/orientation";
 import { PhysicsWorld, type TrackedEntity } from "../sim/physics/PhysicsWorld";
 import { OwnershipRegistry } from "../sim/physics/OwnershipRegistry";
 import { createRobotBody } from "../sim/robot/RobotBody";
@@ -338,6 +339,25 @@ export class SimulationCore {
     timeRemainingSec: number;
     scores: { red: number; blue: number };
   };
+
+  /** Respawns matching robots at their spawns without touching the rest of
+   *  the session: objects, tick counter, command queue, and other robots are
+   *  preserved. Used for per-team retry resets during a live match. */
+  respawnRobots(team?: Team): void {
+    for (const [, slot] of this.slots) {
+      if (team && slot.spec.team !== team) continue;
+      slot.gripper?.release(slot.body.linvel());
+      const q = quatFromEulerYXZ(0, slot.spawn.yaw, 0);
+      slot.body.setTranslation(
+        { x: slot.spawn.x, y: (slot.spec.chassis.height ?? 0.3) / 2 + 0.02, z: slot.spawn.z },
+        true,
+      );
+      slot.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+      slot.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      slot.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      slot.axes = { fwd: 0, strafe: 0, turn: 0 };
+    }
+  }
 
   resetForReplay(): void {
     const meshes = new Map<string, NonNullable<TrackedEntity["mesh"]>>();

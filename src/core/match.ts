@@ -125,7 +125,13 @@ export class MatchController {
 
     this.ticksLeftInPhase -= 1;
     if (this.ticksLeftInPhase <= 0) {
-      this.endMatch(null, "Time expired");
+      const { red, blue } = this.scores;
+      if (red === blue) {
+        this.endMatch(null, `Draw ${red}-${blue} — judges to decide`);
+      } else {
+        const winner = red > blue ? "red" : "blue";
+        this.endMatch(winner, `win on points ${red}-${blue}`);
+      }
     }
   }
 
@@ -231,7 +237,7 @@ export class MatchController {
            if (rule.effect === "retry") {
              if (this.retriesLeft[team] > 0) {
                this.retriesLeft[team] -= 1;
-               this.core.resetForReplay();
+               this.core.respawnRobots(team);
               this.log.push({
                 tick: this.matchTick,
                 timeSec: round2(this.timeElapsedSec()),

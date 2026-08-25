@@ -1,5 +1,6 @@
 export const CG_OBJECT = 0b000001;
-export const CG_STATIC = 0b1000000;
+/** Bit 9: robot membership bits occupy bits 1..8 (MAX_ROBOTS=8); object is bit 0. */
+export const CG_STATIC = 0b1000000000;
 
 export const MAX_ROBOTS = 8;
 

@@ -609,7 +609,7 @@ function setActiveSlot(index: number): void {
   const count = activeSlotCount();
   if (count === 0) return;
   activeSlot = ((index % count) + count) % count;
-  rig?.setFollow(rig.isFollowing() ? `robot-${activeSlot}` : null);
+  rig?.setFollow(rig.isFollowing() ? null : `robot-${activeSlot}`);
   updateFollowButton();
   if (!scriptPanel.hidden) scriptSlotEl.textContent = String(activeSlot + 1);
 }
@@ -660,7 +660,7 @@ btnResetCam.addEventListener("click", () => {
 
 btnFollow.addEventListener("click", () => {
   if (phase !== "ready" || !rig) return;
-  rig.setFollow(rig.isFollowing() ? `robot-${activeSlot}` : null);
+  rig.setFollow(rig.isFollowing() ? null : `robot-${activeSlot}`);
   updateFollowButton();
 });
 

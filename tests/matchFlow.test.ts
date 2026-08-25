@@ -165,4 +165,75 @@ describe("MatchController phases (M3)", () => {
     expect(match.winner).toBe("blue");
     expect(match.phase).toBe("ended");
   });
+
+  it("retry respawns only the offending team and preserves the timeline", async () => {
+    await RAPIER.init();
+    const twoTeamRuleset: CompetitionRuleset = {
+      ...ruleset,
+      absoluteWin: undefined,
+      violations: [{ id: "oob", type: "outOfBounds", marginM: 0.25, effect: "retry" }],
+    };
+    const core = new SimulationCore(arena, twoTeamRuleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+    core.addRobot(1, { ...diffSpec, name: "Blue-1", team: "blue" } satisfies RobotSpec);
+    const match = new MatchController(core, twoTeamRuleset);
+    match.startMatch();
+    tickUntil(match, 2.2);
+    expect(match.phase).toBe("playing");
+
+    const blueBefore = core.getBody(1)!.translation();
+    const objBefore = core.worldObjectCandidates()[0].body.translation();
+    const scoreBefore = { ...match.score };
+    const retriesBefore = match.retriesFor("red");
+
+    core.beginReplayCapture(10);
+    const ticksAtStart = core.tickCount();
+
+    core.getBody(0)!.setTranslation({ x: 9.5, y: 0.2, z: 0 }, true);
+    for (let i = 0; i < 8; i++) match.advance(core.physics.fixedDt);
+
+    expect(match.retriesFor("red")).toBe(retriesBefore - 1);
+    expect(match.score).toEqual(scoreBefore);
+    expect(match.phase).toBe("playing");
+
+    const blueAfter = core.getBody(1)!.translation();
+    expect(Math.hypot(blueAfter.x - blueBefore.x, blueAfter.z - blueBefore.z)).toBeLessThan(0.02);
+    const objAfter = core.worldObjectCandidates()[0].body.translation();
+    expect(Math.hypot(objAfter.x - objBefore.x, objAfter.z - objBefore.z)).toBeLessThan(0.02);
+
+    const redAfter = core.getBody(0)!.translation();
+    expect(redAfter.x).toBeCloseTo(-7, 1);
+
+    const file = core.endReplayCapture();
+    let last = -1;
+    for (const c of file.commands) {
+      expect(c.tick).toBeGreaterThanOrEqual(last);
+      last = c.tick;
+      expect(c.tick).toBeLessThan(file.totalTicks);
+    }
+    expect(ticksAtStart).toBeLessThan(file.totalTicks);
+    void last;
+  });
+
+  it("timeout with unequal scores crowns the leader instead of drawing", async () => {
+    await RAPIER.init();
+    const scoringRuleset: CompetitionRuleset = {
+      ...ruleset,
+      match: { setupSec: 0.05, countdownSec: 0.05, playSec: 0.3, retriesPerTeam: 1 },
+      scoring: [{ id: "goalRedScore", type: "objectInTrigger", triggerId: "goalRed", team: "red", points: 10 }],
+      absoluteWin: undefined,
+      violations: [],
+    };
+    const core = new SimulationCore(arena, scoringRuleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+    const match = new MatchController(core, scoringRuleset);
+    match.startMatch();
+
+    // place the object inside the red goal while still gated, then play out
+    core.worldObjectCandidates()[0].body.setTranslation({ x: -7, y: 0.075, z: -2 }, true);
+    tickUntil(match, 3);
+    expect(match.phase).toBe("ended");
+    expect(match.winner).toBe("red");
+    expect(match.score.red).toBeGreaterThan(0);
+  });
 });
