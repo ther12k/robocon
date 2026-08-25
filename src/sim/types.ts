@@ -91,6 +91,8 @@ export interface ObjectSpawnDef {
 export interface TargetDef {
   id: string;
   accepts: string[];
+  /** Optional explicit link: scoring rules with this triggerId are constrained by this target. */
+  triggerId?: string;
   check: "snapPose";
   pose: { x: number; y: number; z: number };
   size: { w: number; d: number };

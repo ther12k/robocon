@@ -1,13 +1,13 @@
 {
   "meta": {
-    "name": "ABU ROBOCON 2027 — [THEME TBD] Solo, Indonesia",
+    "name": "ABU ROBOCON 2027 \u2014 [THEME TBD] Solo, Indonesia",
     "rulebookVersion": "0-placeholder",
     "tolerancePct": 5,
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "verifyNote": "Placeholder layout pending official rulebook / video verification. All dimensions are defaults and must be verified.",
     "source": {
       "authority": "provisional",
-      "documentTitle": "None — inferred placeholder",
+      "documentTitle": "None \u2014 inferred placeholder",
       "status": "inferred",
       "verifiedAt": null
     }
@@ -183,7 +183,8 @@
         "w": 0.5,
         "d": 0.5
       },
-      "scoreEvent": "placed"
+      "scoreEvent": "placed",
+      "triggerId": "goalZoneRed"
     },
     {
       "id": "targetBlue",
@@ -200,7 +201,8 @@
         "w": 0.5,
         "d": 0.5
       },
-      "scoreEvent": "placed"
+      "scoreEvent": "placed",
+      "triggerId": "goalZoneBlue"
     }
   ],
   "surfaces": {

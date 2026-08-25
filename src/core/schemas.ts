@@ -1,5 +1,5 @@
 export const SCHEMA_VERSIONS = {
-  arena: 1,
+  arena: 2,
   robot: 1,
   competitionRuleset: 1,
   simulationProfile: 1,

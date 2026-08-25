@@ -71,6 +71,8 @@ export class SimulationCore {
   private slots = new Map<number, Slot>();
   private worldObjects: GrabCandidate[] = [];
   private objectEntityIds = new Map<number, string>();
+  private objectTypeIds = new Map<string, string>();
+  private objectStates = new Map<string, "idle" | "held" | "scored" | "out">();
   private triggers = new Map<string, TriggerState>();
   private pendingEvents: SimEvent[] = [];
   private tick = 0;
@@ -109,12 +111,16 @@ export class SimulationCore {
     physics.buildStaticFromArena(this.arena);
     this.worldObjects = [];
     this.objectEntityIds = new Map();
+    this.objectTypeIds = new Map();
+    this.objectStates = new Map();
     for (const spawn of this.arena.objectSpawns) {
       const obj = physics.addDynamicObject(spawn, this.arena.surfaces.defaultFriction);
       const entityId = `obj-${spawn.objectId}`;
       physics.registerEntity(entityId, obj.body);
       this.worldObjects.push({ id: spawn.objectId, body: obj.body, collider: obj.collider });
       this.objectEntityIds.set(obj.collider.handle, entityId);
+      this.objectTypeIds.set(spawn.objectId, spawn.typeId);
+      this.objectStates.set(spawn.objectId, "idle");
     }
     this._ownership = new OwnershipRegistry();
     for (const [index, slot] of this.slots) {
@@ -505,6 +511,37 @@ export class SimulationCore {
     return this.slots.get(slot)?.spec.team;
   }
 
+  getObjectTypeId(objectId: string): string | undefined {
+    return this.objectTypeIds.get(objectId);
+  }
+
+  objectState(objectId: string): "idle" | "held" | "scored" | "out" {
+    const id = this.ownershipRef.ownerOf(
+      this.worldObjects.find((o) => o.id === objectId)?.collider.handle ?? -1,
+    );
+    if (id) return "held";
+    return this.objectStates.get(objectId) ?? "out";
+  }
+
+  markObjectState(objectId: string, state: "scored" | "out"): void {
+    this.objectStates.set(objectId, state);
+  }
+
+  /** Locks a scored object to its target snap pose (kinematic, zero velocity). */
+  lockObjectToTarget(
+    objectId: string,
+    pose: { x: number; y: number; z: number },
+  ): void {
+    const obj = this.worldObjects.find((o) => o.id === objectId);
+    if (!obj) return;
+    obj.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+    obj.body.setTranslation({ x: pose.x, y: pose.y, z: pose.z }, true);
+    obj.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    obj.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    obj.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.objectStates.set(objectId, "scored");
+  }
+
   slotsByTeam(team: "red" | "blue"): number[] {
     return [...this.slots.entries()]
       .filter(([, s]) => s.spec.team === team)
@@ -603,6 +640,7 @@ export class SimulationCore {
       entities: snap.entities,
       holds: snap.holds,
       velocities: this.velocitySamples(),
+      objectStates: [...this.objectStates.entries()].sort((a, b) => a[0].localeCompare(b[0])),
     }));
   }
 
@@ -622,7 +660,12 @@ export class SimulationCore {
       const owner = this.ownershipRef.ownerOf(o.collider.handle);
       if (owner) holds.push({ owner, objectId: o.id });
     }
-    return fnv1a(JSON.stringify({ entities, holds, velocities: this.velocitySamples(true) }));
+    return fnv1a(JSON.stringify({
+      entities,
+      holds,
+      velocities: this.velocitySamples(true),
+      objectStates: [...this.objectStates.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+    }));
   }
 
   private velocitySamples(coarse = false): Array<{ id: string; vx: number; vz: number; wy: number }> {

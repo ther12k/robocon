@@ -1,4 +1,4 @@
-import type { CompetitionRuleset, Team } from "../sim/types";
+import type { CompetitionRuleset, TargetDef, Team } from "../sim/types";
 import { SimulationCore } from "./SimulationCore";
 
 export type MatchPhase = "idle" | "setup" | "countdown" | "playing" | "ended";
@@ -163,7 +163,9 @@ export class MatchController {
   private evaluateScoring(): void {
     for (const rule of this.rules.scoring ?? []) {
       if (rule.type !== "objectInTrigger") continue;
+      const targets = (this.core.arena.targets ?? []).filter((t) => t.triggerId === rule.triggerId);
       for (const candidate of this.core.worldObjectCandidates()) {
+        if (this.core.objectState(candidate.id) === "scored") continue;
         const key = `${candidate.id}@${rule.triggerId}`;
         if (this.scoredKeys.has(key)) continue;
         const entityId = this.core.objectEntityId(candidate.id);
@@ -173,7 +175,19 @@ export class MatchController {
         if (!this.pointInTrigger(rule.triggerId, transform.position.x, transform.position.y, transform.position.z)) {
           continue;
         }
+        const typeId = this.core.getObjectTypeId(candidate.id);
+        let matchedTarget: TargetDef | undefined;
+        if (targets.length > 0) {
+          matchedTarget = targets.find((t) => t.accepts.includes(typeId ?? ""));
+          if (!matchedTarget) continue; // wrong object type for every linked target
+        }
+
         this.scoredKeys.add(key);
+        if (matchedTarget && matchedTarget.check === "snapPose") {
+          this.core.lockObjectToTarget(candidate.id, matchedTarget.pose);
+        } else {
+          this.core.markObjectState(candidate.id, "scored");
+        }
         this.scores[rule.team] += rule.points;
         this.log.push({
           tick: this.matchTick,

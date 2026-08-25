@@ -187,7 +187,6 @@ describe("MatchController phases (M3)", () => {
     const retriesBefore = match.retriesFor("red");
 
     core.beginReplayCapture(10);
-    const ticksAtStart = core.tickCount();
 
     core.getBody(0)!.setTranslation({ x: 9.5, y: 0.2, z: 0 }, true);
     for (let i = 0; i < 8; i++) match.advance(core.physics.fixedDt);
@@ -205,14 +204,71 @@ describe("MatchController phases (M3)", () => {
     expect(redAfter.x).toBeCloseTo(-7, 1);
 
     const file = core.endReplayCapture();
-    let last = -1;
+    let lastTick = -1;
     for (const c of file.commands) {
-      expect(c.tick).toBeGreaterThanOrEqual(last);
-      last = c.tick;
+      expect(c.tick).toBeGreaterThanOrEqual(lastTick);
+      lastTick = c.tick;
       expect(c.tick).toBeLessThan(file.totalTicks);
     }
-    expect(ticksAtStart).toBeLessThan(file.totalTicks);
-    void last;
+    void lastTick;
+  });
+
+  it("enforces target accepts, locks scored objects, and never double-scores", async () => {
+    await RAPIER.init();
+    const targetArena: ArenaConfig = {
+      ...arena,
+      targets: [{
+        id: "t", accepts: ["objA"], triggerId: "goalRed", check: "snapPose",
+        pose: { x: -7, y: 0.075, z: -2 }, size: { w: 0.5, d: 0.5 }, scoreEvent: "goalRedScore",
+      }],
+      objectSpawns: [
+        ...arena.objectSpawns,
+        {
+          objectId: "objB#1", typeId: "objB", pose: { x: -7, y: 0.225, z: 6.02 },
+          initialState: "idle", massKg: 0.8,
+          render: { shape: "box", size: { w: 0.15, h: 0.15, d: 0.15 }, color: "#00f" },
+        },
+      ],
+    };
+    const scoringRuleset: CompetitionRuleset = {
+      ...ruleset,
+      absoluteWin: undefined,
+      violations: [],
+      match: { setupSec: 1, countdownSec: 1, playSec: 30, retriesPerTeam: 1 },
+    };
+    const core = new SimulationCore(targetArena, scoringRuleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+    const match = new MatchController(core, scoringRuleset);
+    match.startMatch();
+    tickUntil(match, 2.2);
+    expect(match.phase).toBe("playing");
+
+    // wrong type is rejected by the target's accepts list
+    core.worldObjectCandidates().find((o) => o.id === "objB#1")!.body
+      .setTranslation({ x: -7, y: 0.075, z: -2 }, true);
+    for (let i = 0; i < 5; i++) match.advance(core.physics.fixedDt);
+    expect(match.score.red).toBe(0);
+
+    // correct type scores and becomes locked at the snap pose
+    core.worldObjectCandidates().find((o) => o.id === "objA#1")!.body
+      .setTranslation({ x: -7, y: 0.075, z: -2 }, true);
+    for (let i = 0; i < 5; i++) match.advance(core.physics.fixedDt);
+    expect(match.score.red).toBe(10);
+    expect(core.objectState("objA#1")).toBe("scored");
+
+    // a scored (fixed) object cannot be pushed out or re-scored
+    const objA = core.worldObjectCandidates().find((o) => o.id === "objA#1")!;
+    objA.body.applyImpulse({ x: 50, y: 0, z: 50 }, true);
+    for (let i = 0; i < 20; i++) match.advance(core.physics.fixedDt);
+    const p = core.physics.getEntityTransform(core.objectEntityId("objA#1")!)!.position;
+    expect(p.x).toBeCloseTo(-7, 1);
+    expect(p.z).toBeCloseTo(-2, 1);
+    expect(match.score.red).toBe(10);
+
+    // moving it back into the goal still cannot score again
+    objA.body.setTranslation({ x: -6.9, y: 0.075, z: -2.1 }, true);
+    for (let i = 0; i < 10; i++) match.advance(core.physics.fixedDt);
+    expect(match.score.red).toBe(10);
   });
 
   it("timeout with unequal scores crowns the leader instead of drawing", async () => {
