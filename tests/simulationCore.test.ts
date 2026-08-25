@@ -151,3 +151,22 @@ describe("snapshot & state hash (R1-03)", () => {
     expect(snap.holds).toEqual([]);
   });
 });
+
+describe("input gate locks", () => {
+  it("keeps the gate blocked while any owner still holds a lock", async () => {
+    await RAPIER.init();
+    const core = new SimulationCore(testArena, testCompetition, testProfile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    core.setInputLock("match-phase", true);
+    core.setInputLock("replay", true);
+    expect(core.inputGateEnabled).toBe(true);
+
+    // Stopping a replay must only release the replay's own lock.
+    core.setInputLock("replay", false);
+    expect(core.inputGateEnabled).toBe(true);
+
+    core.setInputLock("match-phase", false);
+    expect(core.inputGateEnabled).toBe(false);
+  });
+});

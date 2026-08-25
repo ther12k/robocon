@@ -7,6 +7,8 @@ const MAX_DECODED_BYTES = 8_000_000;
  * Encodes a replay file into a compact URL-hash payload.
  * Prefers deflate-raw compression when the runtime provides CompressionStream,
  * falling back to raw UTF-8 bytes. Output is URL-safe (base64url, no padding).
+ * Throws when the final payload would exceed the decoder's own limits — the
+ * app must never produce a link it cannot open itself.
  */
 export async function encodeReplayPayload(
   file: ReplayFile,
@@ -14,17 +16,23 @@ export async function encodeReplayPayload(
 ): Promise<string> {
   const json = JSON.stringify(file);
   const bytes = new TextEncoder().encode(json);
+  let payload: string;
   if (!opts.preferRaw && typeof CompressionStream === "function") {
     try {
       const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
       const deflated = await readWithCap(stream, MAX_DECODED_BYTES);
-      return "z" + base64Url(deflated);
+      payload = "z" + base64Url(deflated);
     } catch (err) {
       if (err instanceof Error && err.message.includes("exceeds")) throw err;
-      // fall through to raw encoding
+      payload = "p" + base64Url(bytes);
     }
+  } else {
+    payload = "p" + base64Url(bytes);
   }
-  return "p" + base64Url(bytes);
+  if (payload.length > MAX_ENCODED_CHARS) {
+    throw new Error(`share link too large (${payload.length} chars, limit ${MAX_ENCODED_CHARS})`);
+  }
+  return payload;
 }
 
 /** Decodes a share payload back into unvalidated JSON data for parsing. */

@@ -6,17 +6,19 @@ export interface WorkerIn {
   type: "init" | "tick";
   code?: string;
   slot?: number;
+  /** Monotonic id matching the outstanding tick this frame belongs to. */
+  id?: number;
   sense?: SensorFrame;
 }
 
 export type WorkerOut =
   | { type: "ready" }
-  | { type: "heartbeat"; tick: number }
   | { type: "axes"; payload: DriveCommand }
   | { type: "grabToggle" }
   | { type: "release" }
   | { type: "log"; message: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "done"; id: number };
 
 export interface ScriptHost {
   post(msg: WorkerIn): void;
@@ -64,6 +66,8 @@ export class AutonomyManager {
   private msgCount = new Map<number, number>();
   private awaitingTick = new Map<number, boolean>();
   private everResponded = new Set<number>();
+  private tickSeq = 0;
+  private lastSentTickId = new Map<number, number>();
   private watchdogPaused = false;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private sensorOpts: SensorOptions;
@@ -134,31 +138,31 @@ export class AutonomyManager {
     }
     const m = msg as WorkerOut;
     this.lastSeen.set(boundSlot, Date.now());
-    this.awaitingTick.delete(boundSlot);
-    // Command spam window = between successive heartbeats (i.e. per sim tick).
-    // Heartbeat/log/ready control traffic never counts toward the limit.
-    if (m.type === "heartbeat") {
-      this.msgCount.delete(boundSlot);
-    }
-    if (m.type === "axes" || m.type === "grabToggle" || m.type === "release") {
-      const count = (this.msgCount.get(boundSlot) ?? 0) + 1;
-      this.msgCount.set(boundSlot, count);
-      if (count > MAX_MESSAGES_PER_TICK) {
-        this.kill(boundSlot, "command spam limit exceeded");
-        return;
-      }
-    }
     switch (m.type) {
       case "ready":
         if (this.states.get(boundSlot)?.status === "booting") {
           this.states.set(boundSlot, { status: "running", detail: "" });
         }
         break;
-      case "heartbeat":
-        break;
-      case "axes": {
-        this.lastSeen.set(boundSlot, Date.now());
+      case "done": {
+        const id = (m as { id?: unknown }).id;
+        const expected = this.lastSentTickId.get(boundSlot);
+        if (
+          typeof id !== "number" ||
+          this.awaitingTick.get(boundSlot) !== true ||
+          id !== expected
+        ) {
+          this.kill(boundSlot, "protocol violation: unexpected done");
+          return;
+        }
         this.awaitingTick.delete(boundSlot);
+        break;
+      }
+      case "axes": {
+        if (this.awaitingTick.get(boundSlot) !== true) {
+          this.kill(boundSlot, "protocol violation: command without outstanding tick");
+          return;
+        }
         const payload = (m as { payload?: unknown }).payload;
         if (!isFiniteAxes(payload)) {
           this.kill(boundSlot, "protocol violation: invalid axes payload");
@@ -173,13 +177,17 @@ export class AutonomyManager {
         break;
       }
       case "grabToggle":
-        this.lastSeen.set(boundSlot, Date.now());
-        this.awaitingTick.delete(boundSlot);
+        if (this.awaitingTick.get(boundSlot) !== true) {
+          this.kill(boundSlot, "protocol violation: command without outstanding tick");
+          return;
+        }
         this.core.enqueueGrabToggle(boundSlot);
         break;
       case "release":
-        this.lastSeen.set(boundSlot, Date.now());
-        this.awaitingTick.delete(boundSlot);
+        if (this.awaitingTick.get(boundSlot) !== true) {
+          this.kill(boundSlot, "protocol violation: command without outstanding tick");
+          return;
+        }
         this.core.injectCommand({ kind: "release", slot: boundSlot });
         break;
       case "log":
@@ -209,6 +217,8 @@ export class AutonomyManager {
     this.lastSeen.delete(slot);
     this.msgCount.delete(slot);
     this.awaitingTick.delete(slot);
+    this.lastSentTickId.delete(slot);
+    this.everResponded.add(slot); // killed hosts are never re-pumped
   }
 
   suspendWatchdog(): void {
@@ -237,10 +247,17 @@ export class AutonomyManager {
 
   private pump(): void {
     for (const [slot, host] of this.hosts) {
+      // One-in-flight backpressure: never queue a new tick while the previous
+      // one is still being processed. The latest sensor frame is coalesced —
+      // the next pump sends the freshest state once `done` arrives.
+      if (this.awaitingTick.get(slot) === true) continue;
       const frame = buildSenseFrame(this.core, slot, this.sensorOpts);
       if (!frame) continue;
-      host.post({ type: "tick", sense: frame, slot });
+      const id = ++this.tickSeq;
+      this.lastSentTickId.set(slot, id);
+      this.msgCount.delete(slot); // fresh command budget per outstanding tick
       this.awaitingTick.set(slot, true);
+      host.post({ type: "tick", sense: frame, slot, id });
     }
   }
 }

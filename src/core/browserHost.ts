@@ -26,12 +26,13 @@ self.onmessage = (e) => {
     return;
   }
   if (msg.type === "tick") {
-    send({ type: "heartbeat", tick: msg.sense ? msg.sense.tick : -1 });
     if (!userTick || !msg.sense) return;
     try {
       userTick(msg.sense, userApi);
+      send({ type: "done", id: msg.id });
     } catch (err) {
       send({ type: "error", message: "onTick: " + err.message });
+      send({ type: "done", id: msg.id });
     }
   }
 };

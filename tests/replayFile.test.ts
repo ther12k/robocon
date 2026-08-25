@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { SimulationCore } from "../src/core/SimulationCore";
-import type { DriveCommand } from "../src/sim/types";
+import type { DriveCommand, RobotSpec } from "../src/sim/types";
 import {
   REPLAY_SCHEMA_VERSION,
   checkReplayCompatibility,
@@ -299,6 +299,24 @@ describe("versioned replay files (R1-06)", () => {
     expect(target.isReplayPlaybackActive()).toBe(false);
     expect(target.wasReplayPlaybackCompleted()).toBe(false);
     expect(target.replayPlaybackError ?? "").toContain("final state hash mismatch");
+  });
+
+  it("rejects replays at preflight when robot specs changed", async () => {
+    await RAPIER.init();
+    const original = recordToFile();
+    expect(original.configHashes.robots).toBeTruthy();
+
+    const target = newCore();
+    target.addRobot(0, {
+      ...diffSpec,
+      chassis: { ...diffSpec.chassis, maxSpeedMps: 1 },
+    } satisfies RobotSpec);
+    const issues = target.validateReplay(original);
+    expect(issues.some((i) => i.field === "configHashes.robots")).toBe(true);
+
+    // identical spec on a fresh core still passes
+    const same = newCore();
+    expect(same.validateReplay(original)).toEqual([]);
   });
 
   it("rejects replays whose config, engine, or initial state no longer match", async () => {

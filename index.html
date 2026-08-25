@@ -98,7 +98,7 @@
           <button id="script-stop">Stop ■</button>
         </div>
         <input type="file" id="script-file" accept=".js,text/javascript" hidden />
-        <div id="script-status" class="builder-issues"><span class="muted">Defines onTick(sense, api). Runs in a sandboxed worker.</span></div>
+        <div id="script-status" class="builder-issues"><span class="muted">Trusted code only — runs in a worker (thread isolation, not a security sandbox). Define onTick(sense, api).</span></div>
       </div>
 
       <footer id="statusbar">

@@ -454,7 +454,13 @@ replayLoadBtn.addEventListener("click", () => replayFileInput.click());
 
 async function copyReplayLink(): Promise<void> {
   if (!replayLoadedFile) return;
-  const url = await buildReplayShareUrl(replayLoadedFile, `${location.origin}${location.pathname}`);
+  let url: string;
+  try {
+    url = await buildReplayShareUrl(replayLoadedFile, `${location.origin}${location.pathname}`);
+  } catch (err) {
+    setReplayStatus([{ cls: "err", text: `cannot share this replay: ${String(err)}` }]);
+    return;
+  }
   const sizeKb = Math.round(url.length / 1024);
   let copied = true;
   try {

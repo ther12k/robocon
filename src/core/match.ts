@@ -92,7 +92,7 @@ export class MatchController {
     this.scoredKeys.clear();
     this.matchTick = 0;
     this.core.resetForReplay();
-    this.core.inputGateEnabled = true;
+    this.core.setInputLock("match-phase", true);
     this.setPhase("setup", match.setupSec, `Match started — setup ${match.setupSec}s`);
   }
 
@@ -105,7 +105,7 @@ export class MatchController {
     this.log = [];
     this.scoredKeys.clear();
     this.matchTick = 0;
-    this.core.inputGateEnabled = false;
+    this.core.setInputLock("match-phase", false);
   }
 
   private setPhase(phase: MatchPhase, durationSec: number, message: string): void {
@@ -164,7 +164,7 @@ export class MatchController {
       const countdownSec = match.countdownSec ?? DEFAULT_COUNTDOWN_SEC;
       this.setPhase("countdown", countdownSec, `Countdown ${countdownSec}s`);
     } else if (this._phase === "countdown") {
-      this.core.inputGateEnabled = false;
+      this.core.setInputLock("match-phase", false);
       this.setPhase("playing", match.playSec, "Play!");
     }
   }
@@ -172,7 +172,7 @@ export class MatchController {
   private endMatch(winner: Team | null, reason: string): void {
     this._phase = "ended";
     this.winnerTeam = winner;
-    this.core.inputGateEnabled = true;
+    this.core.setInputLock("match-phase", true);
     this.log.push({
       tick: this.matchTick,
       timeSec: round2(this.timeElapsedSec()),

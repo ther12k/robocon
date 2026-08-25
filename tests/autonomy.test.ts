@@ -105,18 +105,25 @@ class FakeHost implements ScriptHost {
     this.userTick = compiled as (sense: unknown, api: unknown) => void;
   }
 
+  /** Id of the most recent tick posted by the manager. */
+  lastTickId: number | null = null;
+
   post(msg: WorkerIn): void {
+    // Record the id even when frozen — tests may still complete the tick.
+    if (msg.type === "tick") this.lastTickId = msg.id ?? this.lastTickId;
     if (!this.respondToTicks && msg.type === "tick") return;
     if (msg.type === "init") {
       this.handler?.({ type: "ready" });
       return;
     }
     if (msg.type === "tick" && msg.sense) {
-      this.handler?.({ type: "heartbeat", tick: msg.sense!.tick });
+      this.lastTickId = msg.id ?? 0;
       try {
         this.userTick?.(msg.sense, this.api);
       } catch (err) {
         this.handler?.({ type: "error", message: String(err) });
+      } finally {
+        this.handler?.({ type: "done", id: msg.id ?? 0 });
       }
     }
   }
@@ -128,6 +135,11 @@ class FakeHost implements ScriptHost {
   /** Delivers a raw worker message as-if sent by the script. */
   emit(msg: unknown): void {
     this.handler?.(msg as WorkerOut);
+  }
+
+  /** Completes the outstanding tick (done{id}) without executing user code. */
+  finishLastTick(): void {
+    if (this.lastTickId !== null) this.handler?.({ type: "done", id: this.lastTickId });
   }
 
   onMessage(handler: (msg: WorkerOut) => void): void {
@@ -286,6 +298,79 @@ describe("AutonomyManager (M4)", () => {
     core.injectCommand({ kind: "release", slot: 0 });
     core.advance(core.physics.fixedDt);
     expect(core.gripStatus(0).holding).toBe(false);
+  });
+
+  it("keeps at most one outstanding tick and coalesces frames", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    let ticksPosted = 0;
+    let host: FakeHost | null = null;
+    const manager = new AutonomyManager(core, (code) => {
+      const inner = new FakeHost(code);
+      host = inner;
+      return {
+        post: (m) => {
+          if (m.type === "tick") ticksPosted += 1;
+          inner.post(m);
+        },
+        terminate: () => inner.terminate(),
+        onMessage: inner.onMessage.bind(inner),
+      };
+    });
+    manager.attach(0, sampleCode);
+    await Promise.resolve();
+
+    host!.respondToTicks = false; // hold the tick: never send done
+    core.advance(core.physics.fixedDt);
+    expect(ticksPosted).toBe(1);
+    core.advance(core.physics.fixedDt);
+    core.advance(core.physics.fixedDt);
+    expect(ticksPosted, "backpressure failed — ticks queued without done").toBe(1);
+
+    host!.respondToTicks = true;
+    host!.finishLastTick(); // release the outstanding tick
+    core.advance(core.physics.fixedDt);
+    expect(ticksPosted).toBe(2);
+    manager.dispose();
+  });
+
+  it("accepts exactly 24 commands per outstanding tick and kills on the 25th", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    let host: FakeHost | null = null;
+    const manager = new AutonomyManager(core, (code) => {
+      const inner = new FakeHost(code);
+      host = inner;
+      return {
+        post: (m) => inner.post(m),
+        terminate: () => inner.terminate(),
+        onMessage: inner.onMessage.bind(inner),
+      };
+    });
+    manager.attach(0, 'function onTick(sense, api) {}');
+    await Promise.resolve();
+
+    host!.respondToTicks = false; // hold one tick open
+    core.advance(core.physics.fixedDt);
+
+    for (let i = 0; i < 24; i++) {
+      host!.emit({
+        type: "axes",
+        payload: { fwd: i * 0.01, strafe: 0, turn: 0 },
+      } as unknown);
+      if (i < 23) {
+        expect(manager.status(0).status, `killed early at command ${i + 1}`).not.toBe("killed");
+      }
+    }
+    expect(manager.status(0).status).toBe("running");
+    host!.emit({ type: "axes", payload: { fwd: 0.99, strafe: 0, turn: 0 } } as unknown);
+    expect(manager.status(0).status).toBe("killed");
+    expect(manager.status(0).detail).toContain("command spam limit exceeded");
+    manager.dispose();
   });
 
   it("respects the input gate during setup phase", async () => {    vi.useRealTimers();

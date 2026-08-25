@@ -72,6 +72,8 @@ export interface MatchHashInfo {
   winnerTeam: string | null;
 }
 
+export type InputLockName = "manual" | "match-phase" | "replay";
+
 export class SimulationCore {
   physics: PhysicsWorld;
   readonly bus = new CommandBus();
@@ -86,7 +88,21 @@ export class SimulationCore {
   private triggers = new Map<string, TriggerState>();
   private pendingEvents: SimEvent[] = [];
   private tick = 0;
-  inputGateEnabled = false;
+  private inputLocks = new Set<InputLockName>();
+  /** True when any lock owner (match phase, replay playback, manual) blocks input. */
+  get inputGateEnabled(): boolean {
+    return this.inputLocks.size > 0;
+  }
+  set inputGateEnabled(v: boolean) {
+    this.setInputLock("manual", v);
+  }
+  setInputLock(lock: InputLockName, locked: boolean): void {
+    if (locked) this.inputLocks.add(lock);
+    else this.inputLocks.delete(lock);
+  }
+  hasInputLock(lock: InputLockName): boolean {
+    return this.inputLocks.has(lock);
+  }
   private replayCheckpoints: ReplayCheckpoint[] = [];
   private checkpointIntervalTicks = 0;
   private initialStateAtCapture = "";
@@ -468,7 +484,7 @@ export class SimulationCore {
     this.replayVerify = new Map(file.checkpoints.map((c) => [c.tick, c.hash]));
     this.replayTotalTicks = file.totalTicks;
     this.replayExpectedFinal = file.finalStateHash;
-    this.inputGateEnabled = true;
+    this.setInputLock("replay", true);
     return [];
   }
 
@@ -488,7 +504,7 @@ export class SimulationCore {
   stopReplayPlayback(): void {
     this.replayCmds = null;
     this.replayVerify = null;
-    this.inputGateEnabled = false;
+    this.setInputLock("replay", false);
   }
 
   isReplayPlaybackActive(): boolean {
@@ -686,11 +702,30 @@ export class SimulationCore {
   }
 
   configHashes(): Record<string, string> {
+    // Robot roster/spec identity is part of the determinism contract: a replay
+    // recorded against different chassis must not pass preflight.
+    const roster = [...this.rosterSpecs]
+      .sort((a, b) => a.index - b.index)
+      .map((r) => ({ slot: r.index, spec: this.canonicalize(r.spec) }));
     return {
       arena: fnv1a(JSON.stringify(this.arena)),
       competition: fnv1a(JSON.stringify(this.competition)),
       profile: fnv1a(JSON.stringify(this.profile)),
+      robots: fnv1a(JSON.stringify(roster)),
     };
+  }
+
+  /** Deeply key-sorted JSON so property order never changes a hash. */
+  private canonicalize(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((v) => this.canonicalize(v));
+    if (typeof value === "object" && value !== null) {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+        out[k] = this.canonicalize((value as Record<string, unknown>)[k]);
+      }
+      return out;
+    }
+    return value;
   }
 
   gripStatus(slot: number): { holding: boolean; heldId: string | null; hasGripper: boolean } {
