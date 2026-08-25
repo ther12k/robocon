@@ -83,7 +83,12 @@ export class SimulationCore {
   private replayTotalTicks = 0;
   private replayCompleted = false;
   private replayDesyncTick: number | null = null;
+  private replayExpectedFinal = "";
+  private replayError: string | null = null;
+  private lastRecordedHash = "";
   private sessionId = 0;
+  private rosterSpecs: Array<{ index: number; spec: RobotSpec }> = [];
+  private pristineCache: ReplayRuntimeInfo | null = null;
 
   constructor(arena: ArenaConfig, competition: CompetitionRuleset, profile: SimulationProfile) {
     this.arena = arena;
@@ -175,6 +180,9 @@ export class SimulationCore {
       : null;
     this.physics.registerEntity(`robot-${index}`, body);
     this.slots.set(index, { spec, body, gripper, axes: { fwd: 0, strafe: 0, turn: 0 }, spawn: { x: cx, z: cz, yaw } });
+    this.rosterSpecs = this.rosterSpecs.filter((r) => r.index !== index);
+    this.rosterSpecs.push({ index, spec });
+    this.pristineCache = null;
   }
 
   removeRobot(index: number): void {
@@ -183,6 +191,8 @@ export class SimulationCore {
     slot.gripper?.release(slot.body.linvel());
     this.physics.unregisterEntity(`robot-${index}`);
     this.slots.delete(index);
+    this.rosterSpecs = this.rosterSpecs.filter((r) => r.index !== index);
+    this.pristineCache = null;
   }
 
   hasSlot(index: number): boolean {
@@ -263,12 +273,62 @@ export class SimulationCore {
 
   advance(frameDt: number): void {
     const session = this.sessionId;
-    this.physics.advance(frameDt, (dt) => {
-      if (session !== this.sessionId) return false;
-      const halt = this.onFixedTick();
-      for (const fn of this.postStepListeners) fn(dt);
-      return halt;
-    });
+    this.physics.advance(
+      frameDt,
+      () => {
+        if (session !== this.sessionId) return false;
+        const injected = this.replayCmds?.get(this.tick);
+        if (injected) for (const a of injected) this.applyAction(a);
+        this.bus.setTick(this.tick);
+        this.bus.drain();
+        for (const [, slot] of this.slots) {
+          applyDrive(slot.body, slot.spec, slot.axes, this.physics.fixedDt);
+          slot.gripper?.update(slot.body);
+        }
+        return true;
+      },
+      (dt) => {
+        if (session !== this.sessionId) return false;
+        this.evaluateTriggers();
+        for (const fn of this.postStepListeners) fn(dt);
+        if (
+          this.checkpointIntervalTicks > 0 &&
+          this.bus.isRecording() &&
+          this.tick % this.checkpointIntervalTicks === 0
+        ) {
+          this.replayCheckpoints.push({ tick: this.tick, hash: this.quantizedStateHash() });
+        }
+        if (this.checkpointIntervalTicks > 0 && this.bus.isRecording()) {
+          this.lastRecordedHash = this.stateHash();
+        }
+        this.tick += 1;
+        return this.verifyPlaybackBoundary();
+      },
+    );
+  }
+
+  /** Checks desync/final-hash at the just-completed step boundary. */
+  private verifyPlaybackBoundary(): boolean {
+    if (!this.replayCmds) return true;
+    const expected = this.replayVerify?.get(this.tick - 1);
+    if (expected !== undefined && this.quantizedStateHash() !== expected) {
+      this.replayDesyncTick = this.tick - 1;
+      this.replayError = `state diverged from checkpoint at tick ${this.tick - 1}`;
+      this.stopReplayPlayback();
+      return false;
+    }
+    if (this.tick >= this.replayTotalTicks) {
+      const actual = this.stateHash();
+      if (actual !== this.replayExpectedFinal) {
+        this.replayError = "final state hash mismatch — replay is not faithful to the recording";
+        this.stopReplayPlayback();
+        return false;
+      }
+      this.stopReplayPlayback();
+      this.replayCompleted = true;
+      return false;
+    }
+    return true;
   }
 
   tickCount(): number {
@@ -281,6 +341,7 @@ export class SimulationCore {
     }
     this.bus.startRecording();
     this.replayCheckpoints = [];
+    this.lastRecordedHash = "";
     this.checkpointIntervalTicks = checkpointIntervalTicks;
     this.initialStateAtCapture = this.stateHash();
   }
@@ -297,12 +358,13 @@ export class SimulationCore {
       checkpointIntervalTicks: this.checkpointIntervalTicks,
       checkpoints: [...this.replayCheckpoints],
       totalTicks: this.tick,
-      finalStateHash: this.stateHash(),
+      finalStateHash: this.lastRecordedHash || this.stateHash(),
       commands,
       ...(opts.matchStarted ? { matchStarted: true } : {}),
     };
     this.checkpointIntervalTicks = 0;
     this.initialStateAtCapture = "";
+    this.lastRecordedHash = "";
     return file;
   }
 
@@ -381,14 +443,15 @@ export class SimulationCore {
     this.replayVerify = null;
     this.replayCompleted = false;
     this.replayDesyncTick = null;
+    this.replayError = null;
     this.tick = 0;
     this.bus.resetQueue();
   }
 
   startReplayPlayback(file: ReplayFile): ReplayCompatibilityIssue[] {
-    this.resetForReplay();
-    const issues = checkReplayCompatibility(file, this.replayRuntimeInfo());
+    const issues = this.validateReplay(file);
     if (issues.length > 0) return issues;
+    this.resetForReplay();
     const map = new Map<number, CommandAction[]>();
     for (const c of file.commands) {
       const list = map.get(c.tick) ?? [];
@@ -398,8 +461,22 @@ export class SimulationCore {
     this.replayCmds = map;
     this.replayVerify = new Map(file.checkpoints.map((c) => [c.tick, c.hash]));
     this.replayTotalTicks = file.totalTicks;
+    this.replayExpectedFinal = file.finalStateHash;
     this.inputGateEnabled = true;
     return [];
+  }
+
+  /** Non-destructive compatibility check against the pristine session state. */
+  validateReplay(file: ReplayFile): ReplayCompatibilityIssue[] {
+    return checkReplayCompatibility(file, this.getPristineRuntimeInfo());
+  }
+
+  getPristineRuntimeInfo(): ReplayRuntimeInfo {
+    if (this.pristineCache) return this.pristineCache;
+    const clone = new SimulationCore(this.arena, this.competition, this.profile);
+    for (const r of this.rosterSpecs) clone.addRobot(r.index, r.spec);
+    this.pristineCache = clone.replayRuntimeInfo();
+    return this.pristineCache;
   }
 
   stopReplayPlayback(): void {
@@ -420,6 +497,10 @@ export class SimulationCore {
     return this.replayDesyncTick;
   }
 
+  get replayPlaybackError(): string | null {
+    return this.replayError;
+  }
+
   slotTeam(slot: number): "red" | "blue" | undefined {
     return this.slots.get(slot)?.spec.team;
   }
@@ -438,40 +519,6 @@ export class SimulationCore {
 
   fieldBounds(): { halfW: number; halfL: number } {
     return { halfW: this.arena.dimensions.width / 2, halfL: this.arena.dimensions.length / 2 };
-  }
-
-  private onFixedTick(): boolean {
-    const injected = this.replayCmds?.get(this.tick);
-    if (injected) for (const a of injected) this.applyAction(a);
-    this.bus.setTick(this.tick);
-    this.bus.drain();
-    for (const [, slot] of this.slots) {
-      applyDrive(slot.body, slot.spec, slot.axes, this.physics.fixedDt);
-      slot.gripper?.update(slot.body);
-    }
-    this.evaluateTriggers();
-    if (
-      this.checkpointIntervalTicks > 0 &&
-      this.bus.isRecording() &&
-      this.tick % this.checkpointIntervalTicks === 0
-    ) {
-      this.replayCheckpoints.push({ tick: this.tick, hash: this.quantizedStateHash() });
-    }
-    this.tick += 1;
-    if (this.replayCmds) {
-      const expected = this.replayVerify?.get(this.tick - 1);
-      if (expected !== undefined && this.quantizedStateHash() !== expected) {
-        this.replayDesyncTick = this.tick - 1;
-        this.stopReplayPlayback();
-        return false;
-      }
-      if (this.tick >= this.replayTotalTicks) {
-        this.stopReplayPlayback();
-        this.replayCompleted = true;
-        return false;
-      }
-    }
-    return true;
   }
 
   private evaluateTriggers(): void {
@@ -552,7 +599,11 @@ export class SimulationCore {
 
   stateHash(): string {
     const snap = this.snapshot();
-    return fnv1a(JSON.stringify({ entities: snap.entities, holds: snap.holds }));
+    return fnv1a(JSON.stringify({
+      entities: snap.entities,
+      holds: snap.holds,
+      velocities: this.velocitySamples(),
+    }));
   }
 
   quantizedStateHash(): string {
@@ -571,7 +622,22 @@ export class SimulationCore {
       const owner = this.ownershipRef.ownerOf(o.collider.handle);
       if (owner) holds.push({ owner, objectId: o.id });
     }
-    return fnv1a(JSON.stringify({ entities, holds }));
+    return fnv1a(JSON.stringify({ entities, holds, velocities: this.velocitySamples(true) }));
+  }
+
+  private velocitySamples(coarse = false): Array<{ id: string; vx: number; vz: number; wy: number }> {
+    const round = coarse ? q2 : round3;
+    const out: Array<{ id: string; vx: number; vz: number; wy: number }> = [];
+    for (const [index, slot] of this.slots) {
+      const v = slot.body.linvel();
+      const w = slot.body.angvel();
+      out.push({ id: `robot-${index}`, vx: round(v.x), vz: round(v.z), wy: round(w.y) });
+    }
+    for (const o of this.worldObjects) {
+      const v = o.body.linvel();
+      out.push({ id: `obj-${o.id}`, vx: round(v.x), vz: round(v.z), wy: round(o.body.angvel().y) });
+    }
+    return out;
   }
 
   configHashes(): Record<string, string> {

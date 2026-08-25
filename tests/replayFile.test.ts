@@ -284,6 +284,23 @@ describe("versioned replay files (R1-06)", () => {
     expect(target.gripStatus(0).holding).toBe(false);
   });
 
+  it("aborts playback when the recorded final hash does not match", async () => {
+    await RAPIER.init();
+    const original = recordToFile();
+    const tampered = structuredClone(original);
+    tampered.finalStateHash = "deadbeef";
+
+    const target = newCore();
+    expect(target.startReplayPlayback(tampered)).toEqual([]);
+    let guard = 0;
+    while (target.isReplayPlaybackActive() && guard++ < tampered.totalTicks * 3) {
+      target.advance(target.physics.fixedDt);
+    }
+    expect(target.isReplayPlaybackActive()).toBe(false);
+    expect(target.wasReplayPlaybackCompleted()).toBe(false);
+    expect(target.replayPlaybackError ?? "").toContain("final state hash mismatch");
+  });
+
   it("rejects replays whose config, engine, or initial state no longer match", async () => {
     await RAPIER.init();
     const file = recordToFile();

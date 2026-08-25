@@ -170,14 +170,29 @@ export class PhysicsWorld {
     return [...this.entities.keys()];
   }
 
-  advance(frameDt: number, onStep?: (dt: number) => boolean | void): void {
+  /**
+   * Fixed-timestep loop. `onBeforeStep` runs before each world.step (command
+   * application / actuation); returning false skips the remaining steps.
+   * `onAfterStep` runs after each world.step (scoring, bookkeeping); returning
+   * false halts the loop once the current step has fully completed.
+   */
+  advance(
+    frameDt: number,
+    onBeforeStep?: (dt: number) => boolean | void,
+    onAfterStep?: (dt: number) => boolean | void,
+  ): void {
     this.accumulator += Math.min(frameDt, 0.25);
     while (this.accumulator >= this.fixedDt) {
-      const haltAfterStep = onStep?.(this.fixedDt);
+      const haltBefore = onBeforeStep?.(this.fixedDt);
+      if (haltBefore === false) {
+        this.accumulator = 0;
+        break;
+      }
       this.world.step();
       this.syncMeshes();
       this.accumulator -= this.fixedDt;
-      if (haltAfterStep === false) {
+      const haltAfter = onAfterStep?.(this.fixedDt);
+      if (haltAfter === false) {
         this.accumulator = 0;
         break;
       }

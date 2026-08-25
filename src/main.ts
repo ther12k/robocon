@@ -14,10 +14,14 @@ import { MatchController, type MatchPhase } from "./core/match";
 import { AutonomyManager, type AutonomyState } from "./core/autonomy";
 import { createBrowserHostFactory } from "./core/browserHost";
 import { checkSchemaVersion } from "./core/schemas";
-import { type ReplayFile } from "./core/replayFile";
+import {
+  parseReplayFile,
+  type ReplayFile,
+} from "./core/replayFile";
 import {
   buildReplayShareUrl,
-  replayFromHash,
+  payloadFromHash,
+  decodeReplayPayloadData,
 } from "./core/replayShare";
 import { buildRobotMesh } from "./sim/robot/RobotVisual";
 import { InputManager } from "./sim/input/InputManager";
@@ -347,31 +351,25 @@ function finishPlayback(detail: string, cls: "ok" | "warn" | "err" = "warn"): vo
 
 function loadReplayText(text: string): { ok: boolean } {
   if (!core) return { ok: false };
-  let parsed: unknown;
+  let parsedData: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsedData = JSON.parse(text);
   } catch (err) {
     setReplayStatus([{ cls: "err", text: `invalid JSON: ${String(err)}` }]);
     return { ok: false };
   }
-  const f = parsed as Partial<ReplayFile> | null;
-  if (
-    !f ||
-    typeof f !== "object" ||
-    typeof f.schemaVersion !== "number" ||
-    !Array.isArray(f.commands) ||
-    typeof f.totalTicks !== "number"
-  ) {
-    setReplayStatus([{ cls: "err", text: "not a replay file (missing schemaVersion/commands/totalTicks)" }]);
+  const parsed = parseReplayFile(parsedData);
+  if (!parsed.ok) {
+    setReplayStatus(parsed.errors.slice(0, 6).map((e) => ({ cls: "err", text: e })));
     return { ok: false };
   }
-  replayLoadedFile = parsed as ReplayFile;
+  replayLoadedFile = parsed.file;
   replayUi = "idle";
   updateReplayButtons();
   setReplayStatus([
     {
       cls: "ok",
-      text: `loaded ${f.commands.length} commands / ${f.totalTicks} ticks · engine ${String(f.engineVersion)}`,
+      text: `loaded ${parsed.file.commands.length} commands / ${parsed.file.totalTicks} ticks · engine ${parsed.file.engineVersion}`,
     },
   ]);
   return { ok: true };
@@ -379,18 +377,18 @@ function loadReplayText(text: string): { ok: boolean } {
 
 function playReplay(): void {
   if (!core || !replayLoadedFile || replayUi !== "idle" || !requireIdleMatch()) return;
-  if (replayLoadedFile.matchStarted) {
-    if (!match) {
-      setReplayStatus([{ cls: "err", text: "this replay needs a match session — match controller unavailable" }]);
-      return;
-    }
-    match.startMatch();
+  if (replayLoadedFile.matchStarted && !match) {
+    setReplayStatus([{ cls: "err", text: "this replay needs a match session — match controller unavailable" }]);
+    return;
   }
-  const issues = core.startReplayPlayback(replayLoadedFile);
+  // validate non-destructively BEFORE any state mutation
+  const issues = core.validateReplay(replayLoadedFile);
   if (issues.length > 0) {
     setReplayStatus(issues.map((i) => ({ cls: "err", text: `${i.field}: ${i.message}` })));
     return;
   }
+  if (replayLoadedFile.matchStarted) match!.startMatch();
+  core.startReplayPlayback(replayLoadedFile);
   replayUi = "playing";
   updateReplayButtons();
   setReplayStatus([{ cls: "warn", text: `playing ${replayLoadedFile.totalTicks} ticks…` }]);
@@ -454,19 +452,36 @@ replayShareBtn.addEventListener("click", () => {
   void copyReplayLink();
 });
 
+let pendingSharedFile: ReplayFile | null = null;
+
+/** Parses a #r= hash into a pending replay; applied once bootstrap finishes. */
 async function autoloadFromHash(): Promise<void> {
+  const payload = payloadFromHash(location.hash);
+  if (!payload) return;
   try {
-    const file = await replayFromHash(location.hash);
-    if (file && loadReplayText(JSON.stringify(file)).ok) {
-      replayPanel.hidden = false;
-      btnReplay.classList.add("active");
-      input.setContext("ui");
+    const data = await decodeReplayPayloadData(payload);
+    const parsed = parseReplayFile(data);
+    if (!parsed.ok) {
+      setReplayStatus(parsed.errors.slice(0, 6).map((e) => ({ cls: "err" as StatusTone, text: e })));
+      return;
     }
+    pendingSharedFile = parsed.file;
+    setReplayStatus([{ cls: "ok", text: "share link parsed — loading once the simulator is ready…" }]);
   } catch (err) {
     setReplayStatus([{ cls: "err", text: `share link invalid: ${String(err)}` }]);
   }
 }
-void autoloadFromHash();
+
+function applyPendingSharedFile(): void {
+  if (!pendingSharedFile) return;
+  const file = pendingSharedFile;
+  pendingSharedFile = null;
+  if (loadReplayText(JSON.stringify(file)).ok) {
+    replayPanel.hidden = false;
+    btnReplay.classList.add("active");
+    input.setContext("ui");
+  }
+}
 
 replayFileInput.addEventListener("change", () => {
   const file = replayFileInput.files?.[0];
@@ -806,6 +821,7 @@ async function main(): Promise<void> {
   sizeTelemetryCanvas();
   setPhase("ready");
   installProbe();
+  void autoloadFromHash().then(applyPendingSharedFile);
 
   const clock = new THREE.Clock();
   let frames = 0;
@@ -833,14 +849,17 @@ async function main(): Promise<void> {
         core!.advance(dt);
       }
 
-      if (replayUi === "playing" && core && !core.isReplayPlaybackActive()) {
-        const desync = core.replayDesync;
-        if (desync !== null) {
-          finishPlayback(`aborted — state diverged from checkpoint at tick ${desync}`, "err");
-        } else {
-          finishPlayback(core.wasReplayPlaybackCompleted() ? "finished" : "stopped");
-        }
+    if (replayUi === "playing" && core && !core.isReplayPlaybackActive()) {
+      const desync = core.replayDesync;
+      const playbackError = core.replayPlaybackError;
+      if (playbackError) {
+        finishPlayback(playbackError, "err");
+      } else if (desync !== null) {
+        finishPlayback(`aborted — state diverged from checkpoint at tick ${desync}`, "err");
+      } else {
+        finishPlayback(core.wasReplayPlaybackCompleted() ? "finished" : "stopped");
       }
+    }
 
       rig!.update(dt);
       renderer.render(scene, rig!.camera);

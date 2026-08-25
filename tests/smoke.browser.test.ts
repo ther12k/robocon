@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { preview, type PreviewServer } from "vite";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import { encodeReplayPayload } from "../src/core/replayShare";
+import { REPLAY_SCHEMA_VERSION, type ReplayFile } from "../src/core/replayFile";
 
 interface SimProbe {
   __sim_robotPos(): { x: number; z: number };
@@ -220,7 +222,7 @@ describe("browser smoke (R0-07)", () => {
 
     const file = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayStopExport());
     expect(file).not.toBeNull();
-    expect(file!.schemaVersion).toBe(1);
+    expect(file!.schemaVersion).toBe(REPLAY_SCHEMA_VERSION);
     expect(file!.commands.length).toBeGreaterThan(0);
 
     const loadResult = await page.evaluate(
@@ -307,7 +309,7 @@ describe("browser smoke (R0-07)", () => {
     expect(scriptCheck.pwned).not.toBe("1");
 
     const evil = JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: REPLAY_SCHEMA_VERSION,
       engineVersion: '<img src=x onerror="document.body.dataset.pwned=2">',
       physicsVersion: "0",
       fixedDt: 1 / 60,
@@ -404,5 +406,39 @@ describe("browser smoke (R0-07)", () => {
         (document.getElementById("btn-autonomy") as HTMLButtonElement).click();
       }
     });
+  });
+
+  it("share links load a replay on a cold page open", async (ctx) => {
+    ctx.skip(!browserAvailable, "chrome unavailable");
+
+    const file: ReplayFile = {
+      schemaVersion: REPLAY_SCHEMA_VERSION,
+      engineVersion: "ci-cold-load",
+      physicsVersion: "ci",
+      fixedDt: 1 / 60,
+      configHashes: {},
+      initialStateHash: "00000000",
+      checkpointIntervalTicks: 60,
+      checkpoints: [],
+      totalTicks: 1,
+      finalStateHash: "00000000",
+      commands: [],
+    };
+    const payload = await encodeReplayPayload(file);
+    await page.goto(`${BASE}/#r=${payload}`, { waitUntil: "domcontentloaded" });
+    await waitForReady();
+    await new Promise((r) => setTimeout(r, 400));
+
+    expect(
+      await page.evaluate(() => document.getElementById("replay-panel")!.hidden),
+    ).toBe(false);
+    const status = await page.evaluate(
+      () => document.getElementById("replay-status")!.textContent ?? "",
+    );
+    expect(status).toContain("loaded");
+    expect(status).toContain("ci-cold-load");
+
+    // clean the hash so subsequent reloads in this session stay pristine
+    await page.evaluate((base) => history.replaceState(null, "", base), BASE);
   });
 });
