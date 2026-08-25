@@ -348,6 +348,7 @@ function stopReplayRecording(opts: { download?: boolean } = {}): ReplayFile | nu
   const file = core.endReplayCapture({ matchStarted: replayRecordingMatch });
   replayRecordingMatch = false;
   if (file.totalTicks === 0) {
+    replayUi = "idle";
     updateReplayButtons();
     setReplayStatus([
       { cls: "err", text: "recording captured 0 ticks — drive at least one step before stopping" },

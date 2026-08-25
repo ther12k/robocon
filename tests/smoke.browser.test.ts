@@ -256,6 +256,11 @@ describe("browser smoke (R0-07)", () => {
     ctx.skip(!browserAvailable, "chrome unavailable");
     await forceClosePanels();
 
+    // immediate stop must not produce an exportable zero-tick replay
+    await page.evaluate(() => (window as unknown as SimProbe).__sim_replayRecordToggle());
+    const zeroTick = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayStopExport());
+    expect(zeroTick).toBeNull();
+
     await page.evaluate(() => (window as unknown as SimProbe).__sim_replayRecordToggle());
     expect(
       await page.evaluate(() => (window as unknown as SimProbe).__sim_replayState()),
