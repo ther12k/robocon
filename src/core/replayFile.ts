@@ -11,6 +11,8 @@ export interface ReplayFile {
   schemaVersion: 1 | 2;
   engineVersion: string;
   physicsVersion: string;
+  buildId: string;
+  wasmHash: string;
   fixedDt: number;
   configHashes: Record<string, string>;
   initialStateHash: string;
@@ -26,6 +28,8 @@ export interface ReplayFile {
 export interface ReplayRuntimeInfo {
   engineVersion: string;
   physicsVersion: string;
+  buildId: string;
+  wasmHash: string;
   fixedDt: number;
   configHashes: Record<string, string>;
   initialStateHash: string;
@@ -102,7 +106,8 @@ export function parseReplayFile(data: unknown): ParseResult {
   }
   const f = data as Record<string, unknown>;
   const allowed = [
-    "schemaVersion", "engineVersion", "physicsVersion", "fixedDt", "configHashes",
+    "schemaVersion", "engineVersion", "physicsVersion", "buildId", "wasmHash",
+    "fixedDt", "configHashes",
     "initialStateHash", "checkpointIntervalTicks", "checkpoints", "totalTicks",
     "finalStateHash", "commands", "matchStarted",
   ];
@@ -110,7 +115,7 @@ export function parseReplayFile(data: unknown): ParseResult {
   for (const k of keys) {
     if (!allowed.includes(k)) errors.push(`unknown field: ${k}`);
   }
-  for (const k of ["schemaVersion", "engineVersion", "physicsVersion", "fixedDt", "configHashes", "initialStateHash", "checkpointIntervalTicks", "checkpoints", "totalTicks", "finalStateHash", "commands"]) {
+  for (const k of ["schemaVersion", "engineVersion", "physicsVersion", "buildId", "wasmHash", "fixedDt", "configHashes", "initialStateHash", "checkpointIntervalTicks", "checkpoints", "totalTicks", "finalStateHash", "commands"]) {
     if (!(k in f)) errors.push(`missing field: ${k}`);
   }
   if (errors.length > 0) return { ok: false, errors };
@@ -121,12 +126,13 @@ export function parseReplayFile(data: unknown): ParseResult {
     );
     return { ok: false, errors };
   }
-  for (const k of ["engineVersion", "physicsVersion"] as const) {
+  for (const k of ["engineVersion", "physicsVersion", "buildId"] as const) {
     const v = f[k];
     if (typeof v !== "string" || v.length === 0 || v.length > MAX_LABEL_LEN) {
       errors.push(`${k} must be a non-empty string up to ${MAX_LABEL_LEN} chars`);
     }
   }
+  if (!isHexHash(f.wasmHash, 12)) errors.push("wasmHash must be a 12-char hex string");
   if (!isFiniteIn(f.fixedDt, 1e-6, 1)) errors.push("fixedDt must be a finite number in (0,1]");
   if (
     typeof f.configHashes !== "object" || f.configHashes === null ||
@@ -182,7 +188,9 @@ export function parseReplayFile(data: unknown): ParseResult {
       }
       const cmd = c as Record<string, unknown>;
       if (Object.keys(cmd).sort().join(",") !== "action,tick") errors.push(`command #${i} has unexpected keys`);
-      if (!isIntInRange(cmd.tick, 0, totalTicks - 1)) errors.push(`command #${i} tick out of range`);
+      if (!isIntInRange(cmd.tick, 0, totalTicks - 1)) {
+        errors.push(`command #${i} tick out of range: ${String(cmd.tick)} (totalTicks ${totalTicks})`);
+      }
       errors.push(...isValidAction(cmd.action, totalTicks).map((e) => `command #${i}: ${e}`));
     }
   }
@@ -205,17 +213,13 @@ export function checkReplayCompatibility(
     });
     return issues;
   }
-  if (file.engineVersion !== runtime.engineVersion) {
-    issues.push({
-      field: "engineVersion",
-      message: `replay was recorded on engine ${file.engineVersion}, running ${runtime.engineVersion}`,
-    });
-  }
-  if (file.physicsVersion !== runtime.physicsVersion) {
-    issues.push({
-      field: "physicsVersion",
-      message: `replay was recorded on Rapier ${file.physicsVersion}, running ${runtime.physicsVersion}`,
-    });
+  for (const k of ["engineVersion", "physicsVersion", "buildId", "wasmHash"] as const) {
+    if (file[k] !== runtime[k]) {
+      issues.push({
+        field: k,
+        message: `replay ${k} ${String(file[k])} != runtime ${String(runtime[k])}`,
+      });
+    }
   }
   if (Math.abs(file.fixedDt - runtime.fixedDt) > 1e-9) {
     issues.push({

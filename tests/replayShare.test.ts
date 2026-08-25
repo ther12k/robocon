@@ -16,6 +16,8 @@ function sampleFile(): ReplayFile {
     schemaVersion: REPLAY_SCHEMA_VERSION,
     engineVersion: "0.4.1-test",
     physicsVersion: "0.12.0",
+    buildId: "abcdef123456",
+    wasmHash: "1234567890ab",
     fixedDt: 1 / 60,
     configHashes: { arena: "abc12345", competition: "def45678" },
     initialStateHash: "11111111",

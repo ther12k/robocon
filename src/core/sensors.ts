@@ -101,11 +101,14 @@ export function buildSenseFrame(
   scan.sort((a, b) => a.distance - b.distance);
 
   const grip = core.gripStatus(slot);
-  const matchInfo = core.matchInfo();
+  const mi = core.matchInfo();
+  const matchTimeSec = mi?.timeRemainingSec ?? 0;
+  const matchPhase = mi?.phase ?? "idle";
+  const matchScores = mi?.scores ?? { red: 0, blue: 0 };
 
   return {
     tick: core.tickCount(),
-    matchTimeSec: matchInfo.timeRemainingSec,
+    matchTimeSec,
     odometry: {
       x: Number(p.x.toFixed(4)),
       z: Number(p.z.toFixed(4)),
@@ -119,9 +122,9 @@ export function buildSenseFrame(
     held: grip.holding,
     heldId: grip.heldId,
     match: {
-      phase: matchInfo.phase,
-      timeRemainingSec: Number(matchInfo.timeRemainingSec.toFixed(2)),
-      scores: matchInfo.scores,
+      phase: matchPhase,
+      timeRemainingSec: Number(matchTimeSec.toFixed(2)),
+      scores: matchScores,
     },
   };
 }

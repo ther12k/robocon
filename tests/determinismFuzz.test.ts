@@ -4,6 +4,7 @@ import { SimulationCore } from "../src/core/SimulationCore";
 import type { DriveCommand } from "../src/sim/types";
 import type { ReplayFile } from "../src/core/replayFile";
 import { diffSpec, testArena, testCompetition, testProfile } from "./simulationCore.test";
+import { parseReplayFile } from "../src/core/replayFile";
 
 type Rng = () => number;
 
@@ -90,6 +91,11 @@ describe("determinism fuzz (seeded)", () => {
       const interval = seed % 3 === 0 ? 7 : seed % 3 === 1 ? 60 : 25;
       const file = recordRandomSession(seed, interval);
 
+      const parseCheck = parseReplayFile(JSON.parse(JSON.stringify(file)));
+      if (!parseCheck.ok) {
+        console.log(`seed ${seed} parse errors:`, parseCheck.errors.join(" | "));
+      }
+      expect(parseCheck.ok, `seed ${seed} failed strict parsing`).toBe(true);
       expect(file.commands.length, `seed ${seed} recorded too little`).toBeGreaterThan(TICKS / 10);
       expect(file.finalStateHash).not.toBe(file.initialStateHash);
 

@@ -419,6 +419,8 @@ describe("browser smoke (R0-07)", () => {
       schemaVersion: REPLAY_SCHEMA_VERSION,
       engineVersion: "ci-cold-load",
       physicsVersion: "ci",
+      buildId: "abcdef123456",
+      wasmHash: "1234567890ab",
       fixedDt: 1 / 60,
       configHashes: {},
       initialStateHash: "00000000",

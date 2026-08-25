@@ -40,11 +40,19 @@ export class MatchController {
     this.core = core;
     this.rules = rules;
     core.addPostStepListener(() => this.onFixedTick());
-    core.setMatchInfoProvider(() => ({
-      phase: this._phase,
-      timeRemainingSec: this.timeRemainingSec,
-      scores: { ...this.scores },
-    }));
+    core.setMatchInfoProvider(() =>
+      // Idle matches contribute nothing to authoritative hashes — this keeps
+      // pristine-session clones symmetric with live sessions.
+      this._phase === "idle"
+        ? null
+        : {
+            phase: this._phase,
+            timeRemainingSec: this.timeRemainingSec,
+            scores: { ...this.scores },
+            retriesLeft: { ...this.retriesLeft },
+            winnerTeam: this.winnerTeam,
+          },
+    );
   }
 
   get phase(): MatchPhase {

@@ -1,6 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import type { ArenaConfig, CompetitionRuleset, DriveCommand, RobotSpec, SimulationProfile, Team } from "../sim/types";
 import { quatFromEulerYXZ } from "../sim/orientation";
+import { BUILD_ID, WASM_HASH } from "./buildInfo";
 import { PhysicsWorld, type TrackedEntity } from "../sim/physics/PhysicsWorld";
 import { OwnershipRegistry } from "../sim/physics/OwnershipRegistry";
 import { createRobotBody } from "../sim/robot/RobotBody";
@@ -16,7 +17,8 @@ import {
   type ReplayRuntimeInfo,
 } from "./replayFile";
 
-export const ENGINE_VERSION = "0.1.0";
+/** Engine identity includes the git build SHA via BUILD_ID. */
+export const ENGINE_VERSION = `0.1.0+${BUILD_ID}`;
 
 export interface SimEvent {
   tick: number;
@@ -60,6 +62,14 @@ interface Slot {
 
 interface TriggerState {
   inside: Set<string>;
+}
+
+export interface MatchHashInfo {
+  phase: string;
+  timeRemainingSec: number;
+  scores: { red: number; blue: number };
+  retriesLeft: { red: number; blue: number };
+  winnerTeam: string | null;
 }
 
 export class SimulationCore {
@@ -357,7 +367,9 @@ export class SimulationCore {
     const file: ReplayFile = {
       schemaVersion: REPLAY_SCHEMA_VERSION,
       engineVersion: ENGINE_VERSION,
+      buildId: BUILD_ID,
       physicsVersion: RAPIER.version(),
+      wasmHash: WASM_HASH,
       fixedDt: this.physics.fixedDt,
       configHashes: this.configHashes(),
       initialStateHash: this.initialStateAtCapture,
@@ -377,36 +389,24 @@ export class SimulationCore {
   replayRuntimeInfo(): ReplayRuntimeInfo {
     return {
       engineVersion: ENGINE_VERSION,
+      buildId: BUILD_ID,
       physicsVersion: RAPIER.version(),
+      wasmHash: WASM_HASH,
       fixedDt: this.physics.fixedDt,
       configHashes: this.configHashes(),
       initialStateHash: this.stateHash(),
     };
   }
 
-  matchInfo(): {
-    phase: string;
-    timeRemainingSec: number;
-    scores: { red: number; blue: number };
-  } {
-    const info = this._matchInfoProvider?.();
-    return (
-      info ?? { phase: "idle", timeRemainingSec: 0, scores: { red: 0, blue: 0 } }
-    );
+  /** Live match snapshot for authoritative hashing; null when idle/unset. */
+  matchInfo(): MatchHashInfo | null {
+    return this._matchInfoProvider ? this._matchInfoProvider() : null;
   }
 
-  setMatchInfoProvider(provider: () => {
-    phase: string;
-    timeRemainingSec: number;
-    scores: { red: number; blue: number };
-  }): void {
+  setMatchInfoProvider(provider: () => MatchHashInfo | null): void {
     this._matchInfoProvider = provider;
   }
-  private _matchInfoProvider?: () => {
-    phase: string;
-    timeRemainingSec: number;
-    scores: { red: number; blue: number };
-  };
+  private _matchInfoProvider?: () => MatchHashInfo | null;
 
   /** Respawns matching robots at their spawns without touching the rest of
    *  the session: objects, tick counter, command queue, and other robots are
@@ -641,6 +641,7 @@ export class SimulationCore {
       holds: snap.holds,
       velocities: this.velocitySamples(),
       objectStates: [...this.objectStates.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+      match: this.matchInfo(),
     }));
   }
 
@@ -665,6 +666,7 @@ export class SimulationCore {
       holds,
       velocities: this.velocitySamples(true),
       objectStates: [...this.objectStates.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+      match: this.matchInfo(),
     }));
   }
 
