@@ -37,7 +37,7 @@ export interface AutonomyState {
 
 const STALL_LIMIT_MS = 750;
 const WATCHDOG_INTERVAL_MS = 120;
-const MAX_MESSAGES_PER_TICK = 24;
+const MAX_COMMANDS_PER_TICK = 24;
 
 function clampAxis(v: number): number {
   return v < -1 ? -1 : v > 1 ? 1 : v;
@@ -62,12 +62,12 @@ export class AutonomyManager {
   private factory: HostFactory;
   private hosts = new Map<number, ScriptHost>();
   private states = new Map<number, AutonomyState>();
-  private lastSeen = new Map<number, number>();
   private msgCount = new Map<number, number>();
   private awaitingTick = new Map<number, boolean>();
-  private everResponded = new Set<number>();
   private tickSeq = 0;
   private lastSentTickId = new Map<number, number>();
+  /** Watchdog deadlines: boot phase after attach, or an outstanding tick. */
+  private deadlines = new Map<number, { kind: "boot" | "tick"; id?: number; expires: number }>();
   private watchdogPaused = false;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private sensorOpts: SensorOptions;
@@ -90,6 +90,7 @@ export class AutonomyManager {
     this.detach(slot);
     const state: AutonomyState = { status: "booting", detail: "compiling" };
     this.states.set(slot, state);
+    this.deadlines.set(slot, { kind: "boot", expires: Date.now() + STALL_LIMIT_MS });
     let host: ScriptHost;
     try {
       host = this.factory(code);
@@ -98,7 +99,6 @@ export class AutonomyManager {
       return;
     }
     this.hosts.set(slot, host);
-    this.lastSeen.set(slot, Date.now());
     this.msgCount.set(slot, 0);
     host.onMessage((msg) => this.handleMessage(slot, msg));
     host.post({ type: "init", code, slot });
@@ -113,10 +113,9 @@ export class AutonomyManager {
     if (this.states.get(slot)?.status !== "error") {
       this.states.set(slot, { status: "detached", detail: "" });
     }
-    this.lastSeen.delete(slot);
     this.msgCount.delete(slot);
     this.awaitingTick.delete(slot);
-    this.everResponded.delete(slot);
+    this.deadlines.delete(slot);
   }
 
   dispose(): void {
@@ -130,16 +129,20 @@ export class AutonomyManager {
       this.kill(boundSlot, "protocol violation: malformed message");
       return;
     }
-    const count = (this.msgCount.get(boundSlot) ?? 0) + 1;
-    this.msgCount.set(boundSlot, count);
-    if (count > MAX_MESSAGES_PER_TICK) {
-      this.kill(boundSlot, "command spam limit exceeded");
-      return;
-    }
     const m = msg as WorkerOut;
-    this.lastSeen.set(boundSlot, Date.now());
+    // Only actual commands consume the budget — ready/done/log/error are
+    // control traffic and arrive in bursts on slow renderers.
+    if (m.type === "axes" || m.type === "grabToggle" || m.type === "release") {
+      const count = (this.msgCount.get(boundSlot) ?? 0) + 1;
+      this.msgCount.set(boundSlot, count);
+      if (count > MAX_COMMANDS_PER_TICK) {
+        this.kill(boundSlot, `command spam limit exceeded (${MAX_COMMANDS_PER_TICK} commands per tick)`);
+        return;
+      }
+    }
     switch (m.type) {
       case "ready":
+        if (this.deadlines.get(boundSlot)?.kind === "boot") this.deadlines.delete(boundSlot);
         if (this.states.get(boundSlot)?.status === "booting") {
           this.states.set(boundSlot, { status: "running", detail: "" });
         }
@@ -156,6 +159,7 @@ export class AutonomyManager {
           return;
         }
         this.awaitingTick.delete(boundSlot);
+        this.deadlines.delete(boundSlot);
         break;
       }
       case "axes": {
@@ -191,7 +195,6 @@ export class AutonomyManager {
         this.core.injectCommand({ kind: "release", slot: boundSlot });
         break;
       case "log":
-        this.lastSeen.set(boundSlot, Date.now());
         this.states.set(boundSlot, {
           status: this.states.get(boundSlot)?.status ?? "running",
           detail: String((m as { message?: unknown }).message ?? "").slice(0, 200),
@@ -214,11 +217,10 @@ export class AutonomyManager {
     host?.terminate();
     this.hosts.delete(slot);
     this.states.set(slot, { status: "killed", detail: reason });
-    this.lastSeen.delete(slot);
     this.msgCount.delete(slot);
     this.awaitingTick.delete(slot);
     this.lastSentTickId.delete(slot);
-    this.everResponded.add(slot); // killed hosts are never re-pumped
+    this.deadlines.delete(slot);
   }
 
   suspendWatchdog(): void {
@@ -228,19 +230,23 @@ export class AutonomyManager {
   resumeWatchdog(): void {
     this.watchdogPaused = false;
     const now = Date.now();
-    for (const [slot] of this.hosts) this.lastSeen.set(slot, now);
+    for (const [slot, d] of this.deadlines) {
+      this.deadlines.set(slot, { ...d, expires: now + STALL_LIMIT_MS });
+    }
   }
 
   private checkStalls(): void {
     if (this.watchdogPaused) return;
     const now = Date.now();
-    for (const [slot] of this.hosts) {
-      const hasOutstandingTick = this.awaitingTick.get(slot) === true;
-      const neverResponded = !this.everResponded.has(slot);
-      if (!hasOutstandingTick && !neverResponded) continue;
-      const seen = this.lastSeen.get(slot) ?? 0;
-      if (now - seen > STALL_LIMIT_MS) {
-        this.kill(slot, `no response for ${STALL_LIMIT_MS}ms — terminated by watchdog`);
+    for (const [slot, deadline] of this.deadlines) {
+      if (!this.hosts.has(slot)) continue;
+      if (now > deadline.expires) {
+        this.kill(
+          slot,
+          deadline.kind === "boot"
+            ? `script did not become ready within ${STALL_LIMIT_MS}ms — terminated by watchdog`
+            : `no done within ${STALL_LIMIT_MS}ms — terminated by watchdog`,
+        );
       }
     }
   }
@@ -258,6 +264,7 @@ export class AutonomyManager {
       this.msgCount.delete(slot); // fresh command budget per outstanding tick
       this.awaitingTick.set(slot, true);
       host.post({ type: "tick", sense: frame, slot, id });
+      this.deadlines.set(slot, { kind: "tick", id, expires: Date.now() + STALL_LIMIT_MS });
     }
   }
 }

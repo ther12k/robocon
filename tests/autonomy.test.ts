@@ -373,6 +373,105 @@ describe("AutonomyManager (M4)", () => {
     manager.dispose();
   });
 
+  it("accepts 24 commands plus done, counts only commands, and kills on the 25th", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    let host: FakeHost | null = null;
+    const manager = new AutonomyManager(core, (code) => {
+      const inner = new FakeHost(code);
+      host = inner;
+      return {
+        post: (m) => inner.post(m),
+        terminate: () => inner.terminate(),
+        onMessage: inner.onMessage.bind(inner),
+      };
+    });
+    manager.attach(0, 'function onTick(sense, api) {}');
+    await Promise.resolve();
+
+    // Hold one tick open so commands have an outstanding tick to belong to.
+    host!.respondToTicks = false;
+    core.advance(core.physics.fixedDt);
+
+    for (let i = 0; i < 24; i++) {
+      host!.emit({ type: "log", message: `noise ${i}` } as unknown); // must not consume budget
+      host!.emit({
+        type: "axes",
+        payload: { fwd: i * 0.01, strafe: 0, turn: 0 },
+      } as unknown);
+      expect(manager.status(0).status, `killed at command ${i + 1}`).not.toBe("killed");
+    }
+
+    // mandatory done after the 24th command — must be accepted, not counted
+    host!.finishLastTick();
+    expect(manager.status(0).status).toBe("running");
+
+    // fresh budget on the next outstanding tick: one command is fine again
+    core.advance(core.physics.fixedDt);
+    host!.emit({ type: "axes", payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
+    expect(manager.status(0).status).toBe("running");
+    manager.dispose();
+  });
+
+  it("kills the worker when 25 commands arrive within a single tick window", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    let host: FakeHost | null = null;
+    const manager = new AutonomyManager(core, (code) => {
+      const inner = new FakeHost(code);
+      host = inner;
+      return {
+        post: (m) => inner.post(m),
+        terminate: () => inner.terminate(),
+        onMessage: inner.onMessage.bind(inner),
+      };
+    });
+    manager.attach(0, 'function onTick(sense, api) {}');
+    await Promise.resolve();
+
+    host!.respondToTicks = false;
+    core.advance(core.physics.fixedDt);
+
+    for (let i = 0; i < 24; i++) {
+      host!.emit({
+        type: "axes",
+        payload: { fwd: i * 0.01, strafe: 0, turn: 0 },
+      } as unknown);
+    }
+    expect(manager.status(0).status).toBe("running");
+
+    host!.emit({
+      type: "axes",
+      payload: { fwd: 0.99, strafe: 0, turn: 0 },
+    } as unknown);
+    expect(manager.status(0).status).toBe("killed");
+    expect(manager.status(0).detail).toContain("command spam limit exceeded");
+    manager.dispose();
+  });
+
+  it("does not kill a healthy idle worker after the stall limit with no outstanding tick", async () => {
+    vi.useFakeTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    const manager = new AutonomyManager(core, (code) => new FakeHost(code));
+    manager.attach(0, sampleCode);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(manager.status(0).status).toBe("running"); // ready received → boot deadline cleared
+
+    // visible-thread long task well past the stall limit, but no tick was
+    // ever sent — there is no deadline, so the watchdog must do nothing.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(manager.status(0).status).toBe("running");
+
+    vi.useRealTimers();
+    manager.dispose();
+  });
+
   it("respects the input gate during setup phase", async () => {    vi.useRealTimers();
     const { core, match } = setupWithMatch();
     const manager = new AutonomyManager(core, (code) => new FakeHost(code));

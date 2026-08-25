@@ -31,8 +31,9 @@ self.onmessage = (e) => {
       userTick(msg.sense, userApi);
       send({ type: "done", id: msg.id });
     } catch (err) {
+      // error is the terminal response for this tick — the host kills the
+      // worker immediately, so a trailing done would be flagged unexpected.
       send({ type: "error", message: "onTick: " + err.message });
-      send({ type: "done", id: msg.id });
     }
   }
 };
