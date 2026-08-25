@@ -126,7 +126,12 @@ export class SimulationCore {
   }
 
   private handleAction(action: CommandAction): boolean {
-    if (this.inputGateEnabled && (action.kind === "axes" || action.kind === "grabToggle")) return false;
+    if (
+      this.inputGateEnabled &&
+      (action.kind === "axes" || action.kind === "grabToggle" || action.kind === "release")
+    ) {
+      return false;
+    }
     return this.applyAction(action);
   }
 

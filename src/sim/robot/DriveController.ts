@@ -13,12 +13,17 @@ function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
 }
 
-export function normalizeCommand(cmd: DriveCommand): DriveCommand {
+function sane(v: number): number {
+  return Number.isFinite(v) ? v : 0;
+}
+
+export function normalizeCommand(raw: DriveCommand): DriveCommand {
+  const cmd = { fwd: sane(raw.fwd), strafe: sane(raw.strafe), turn: clamp(sane(raw.turn), -1, 1) };
   const mag = Math.hypot(cmd.fwd, cmd.strafe);
   if (mag > 1) {
-    return { fwd: cmd.fwd / mag, strafe: cmd.strafe / mag, turn: clamp(cmd.turn, -1, 1) };
+    return { fwd: cmd.fwd / mag, strafe: cmd.strafe / mag, turn: cmd.turn };
   }
-  return { fwd: cmd.fwd, strafe: cmd.strafe, turn: clamp(cmd.turn, -1, 1) };
+  return cmd;
 }
 
 const ANGULAR_ACCEL_FACTOR = 2;

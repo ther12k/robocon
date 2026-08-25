@@ -278,6 +278,63 @@ describe("browser smoke (R0-07)", () => {
     expect(Number.isNaN(state.speed)).toBe(false);
   });
 
+  it("status panels render worker and replay metadata as text, not HTML", async (ctx) => {
+    ctx.skip(!browserAvailable, "chrome unavailable");
+    await forceClosePanels();
+
+    await page.click("#btn-autonomy");
+    await page.evaluate(() => {
+      (document.getElementById("script-code") as HTMLTextAreaElement).value =
+        'function onTick(sense, api){ api.log(\'<img src=x onerror="document.body.dataset.pwned=1">\'); }';
+    });
+    await page.click("#script-run");
+
+    const start = Date.now();
+    let text = "";
+    while (Date.now() - start < 4000) {
+      text = await page.evaluate(
+        () => document.getElementById("script-status")!.textContent ?? "",
+      );
+      if (text.includes("<img")) break;
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    const scriptCheck = await page.evaluate(() => ({
+      pwned: document.body.dataset.pwned ?? "",
+      imgs: document.getElementById("script-status")!.querySelectorAll("img").length,
+    }));
+    expect(text).toContain("<img src=x");
+    expect(scriptCheck.imgs).toBe(0);
+    expect(scriptCheck.pwned).not.toBe("1");
+
+    const evil = JSON.stringify({
+      schemaVersion: 1,
+      engineVersion: '<img src=x onerror="document.body.dataset.pwned=2">',
+      physicsVersion: "0",
+      fixedDt: 1 / 60,
+      configHashes: {},
+      initialStateHash: "deadbeef",
+      checkpointIntervalTicks: 60,
+      checkpoints: [],
+      totalTicks: 1,
+      finalStateHash: "beefcafe",
+      commands: [],
+    });
+    await page.evaluate(
+      (t) => (window as unknown as SimProbe).__sim_replayLoadText(t),
+      evil,
+    );
+    const replayCheck = await page.evaluate(() => ({
+      text: document.getElementById("replay-status")!.textContent ?? "",
+      imgs: document.getElementById("replay-status")!.querySelectorAll("img").length,
+      pwned: document.body.dataset.pwned ?? "",
+    }));
+    expect(replayCheck.text).toContain("<img src=x");
+    expect(replayCheck.imgs).toBe(0);
+    expect(replayCheck.pwned).not.toBe("2");
+
+    await page.evaluate(() => document.getElementById("script-stop")!.click());
+  });
+
   it("autonomy script reaches running state in a live blob worker", async (ctx) => {
     ctx.skip(!browserAvailable, "chrome unavailable");
     await forceClosePanels();

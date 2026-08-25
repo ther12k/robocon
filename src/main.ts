@@ -186,10 +186,26 @@ function closeScriptPanel(): void {
   input.setContext("simulation");
 }
 
+type StatusTone = "ok" | "warn" | "err";
+
+function toneForStatus(status: string): StatusTone {
+  return status === "running" ? "ok" : status === "error" || status === "killed" ? "err" : "warn";
+}
+
+function renderStatusInto(
+  el: HTMLElement,
+  label: string,
+  tone: StatusTone,
+  detail: string,
+): void {
+  const badge = document.createElement("span");
+  badge.className = tone;
+  badge.textContent = `[${label}]`;
+  el.replaceChildren(badge, document.createTextNode(` ${detail}`));
+}
+
 function setScriptStatus(state: AutonomyState): void {
-  const cls =
-    state.status === "running" ? "ok" : state.status === "error" || state.status === "killed" ? "err" : "warn";
-  scriptStatusEl.innerHTML = `<span class="${cls}">[${state.status}]</span> ${state.detail}`;
+  renderStatusInto(scriptStatusEl, state.status, toneForStatus(state.status), state.detail);
 }
 
 btnAutonomy.addEventListener("click", () => {
@@ -238,8 +254,15 @@ let replayUi: ReplayUiState = "idle";
 let replayLoadedFile: ReplayFile | null = null;
 let replayRecordingMatch = false;
 
-function setReplayStatus(entries: Array<{ cls: string; text: string }>): void {
-  replayStatusEl.innerHTML = entries.map((e) => `<span class="${e.cls}">${e.text}</span>`).join("");
+function setReplayStatus(entries: Array<{ cls: StatusTone; text: string }>): void {
+  const frag = document.createDocumentFragment();
+  for (const e of entries) {
+    const span = document.createElement("span");
+    span.className = e.cls;
+    span.textContent = e.text;
+    frag.appendChild(span);
+  }
+  replayStatusEl.replaceChildren(frag);
 }
 
 function updateReplayButtons(): void {
@@ -372,6 +395,12 @@ function playReplay(): void {
   updateReplayButtons();
   setReplayStatus([{ cls: "warn", text: `playing ${replayLoadedFile.totalTicks} ticks…` }]);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!autonomy) return;
+  if (document.hidden) autonomy.suspendWatchdog();
+  else autonomy.resumeWatchdog();
+});
 
 btnReplay.addEventListener("click", () => {
   if (phase !== "ready") return;

@@ -79,7 +79,6 @@ function setupWithMatch() {
 class FakeHost implements ScriptHost {
   private handler: ((msg: WorkerOut) => void) | null = null;
   private userTick: ((sense: unknown, api: unknown) => void) | null = null;
-  private slot = 0;
   respondToTicks = true;
   apiLog: string[] = [];
   private api: unknown;
@@ -88,13 +87,13 @@ class FakeHost implements ScriptHost {
     const self = this;
     this.api = {
       setAxes(fwd: number, strafe: number, turn: number) {
-        self.handler?.({ type: "axes", slot: self.slot, payload: { fwd, strafe, turn } });
+        self.handler?.({ type: "axes", payload: { fwd, strafe, turn } });
       },
       grabToggle() {
-        self.handler?.({ type: "grabToggle", slot: self.slot });
+        self.handler?.({ type: "grabToggle" });
       },
       release() {
-        self.handler?.({ type: "release", slot: self.slot });
+        self.handler?.({ type: "release" });
       },
       log(message: string) {
         self.apiLog.push(String(message));
@@ -109,7 +108,6 @@ class FakeHost implements ScriptHost {
   post(msg: WorkerIn): void {
     if (!this.respondToTicks && msg.type === "tick") return;
     if (msg.type === "init") {
-      this.slot = msg.slot ?? 0;
       this.handler?.({ type: "ready" });
       return;
     }
@@ -125,6 +123,11 @@ class FakeHost implements ScriptHost {
 
   terminate(): void {
     this.userTick = null;
+  }
+
+  /** Delivers a raw worker message as-if sent by the script. */
+  emit(msg: unknown): void {
+    this.handler?.(msg as WorkerOut);
   }
 
   onMessage(handler: (msg: WorkerOut) => void): void {
@@ -149,11 +152,6 @@ describe("sensors (Competition API)", () => {
 });
 
 describe("AutonomyManager (M4)", () => {
-  function makeManager(core: SimulationCore): AutonomyManager {
-    vi.useFakeTimers();
-    const factory: HostFactory = (code) => new FakeHost(code);
-    return new AutonomyManager(core, factory);
-  }
 
   it("sample bot gathers and scores unaided inside a live match", async () => {
     vi.useRealTimers();
@@ -182,43 +180,115 @@ describe("AutonomyManager (M4)", () => {
     vi.useFakeTimers();
     const core = new SimulationCore(arena, ruleset, profile);
     core.addRobot(0, diffSpec satisfies RobotSpec);
-    const manager = makeManager(core);
 
-    let terminated = false;
-    const factory: HostFactory = (code) => {
+    // simulate the host freezing mid-tick: pump delivers a tick, the frozen
+    // host never answers, and the outstanding-tick watchdog must fire.
+    let frozenHost: FakeHost | null = null;
+    const freezingFactory: HostFactory = (code) => {
       const inner = new FakeHost(code);
-      const wrapped: ScriptHost = {
+      frozenHost = inner;
+      return {
         post: (m) => inner.post(m),
-        terminate: () => {
-          terminated = true;
-          inner.terminate();
-        },
+        terminate: () => inner.terminate(),
         onMessage: inner.onMessage.bind(inner),
       };
-      return wrapped;
     };
-    const manager2 = new AutonomyManager(core, factory);
-
-    manager2.attach(0, "function onTick(sense, api) { while (true) {} }");
+    const frozenManager = new AutonomyManager(core, freezingFactory);
+    frozenManager.attach(0, "function onTick(sense, api) { while (true) {} }");
     await vi.advanceTimersByTimeAsync(50);
-    expect(manager2.status(0).status).toBe("running");
-
-    // simulate the host freezing: stop responding by swapping in a silent shell
-    manager2.attach(0, "function onTick(sense, api) { while (true) {} }");
+    expect(frozenManager.status(0).status).toBe("running");
+    frozenHost!.respondToTicks = false; // host goes busy-silent from now on
+    core.advance(core.physics.fixedDt); // pump -> outstanding tick
     await vi.advanceTimersByTimeAsync(1000);
-
-    // after stall limit the manager must have terminated the host
-    expect(manager2.status(0).status).toBe("killed");
-    void terminated;
-    void manager;
+    expect(frozenManager.status(0).status).toBe("killed");
 
     vi.useRealTimers();
-    manager.dispose();
-    manager2.dispose();
+    frozenManager.dispose();
   });
 
-  it("respects the input gate during setup phase", async () => {
+  it("ignores forged slot ids: a slot-0 script cannot drive slot 1", async () => {
     vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+    core.addRobot(1, diffSpec satisfies RobotSpec);
+    const host = new FakeHost(sampleCode);
+    const manager = new AutonomyManager(core, () => host);
+    manager.attach(0, sampleCode);
+
+    // forged message claiming slot 1 — must be bound to the host's own slot 0
+    for (let i = 0; i < 15; i++) core.advance(core.physics.fixedDt); // settle bodies
+    const p0Before = core.getBody(0)!.translation();
+    const p1Before = core.getBody(1)!.translation();
+    host.emit({ type: "axes", slot: 1, payload: { fwd: 1, strafe: 0, turn: 0 } });
+    for (let i = 0; i < 30; i++) core.advance(core.physics.fixedDt);
+
+    const p0 = core.getBody(0)!.translation();
+    const p1 = core.getBody(1)!.translation();
+    expect(Math.hypot(p1.x - p1Before.x, p1.z - p1Before.z)).toBeLessThan(0.02);
+    expect(Math.hypot(p0.x - p0Before.x, p0.z - p0Before.z)).toBeGreaterThan(0.3);
+    manager.dispose();
+  });
+
+  it("kills workers that send malformed or out-of-protocol messages", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    // NaN payload
+    const bad1 = new FakeHost(sampleCode);
+    const m1 = new AutonomyManager(core, () => bad1);
+    m1.attach(0, sampleCode);
+    bad1.emit({ type: "axes", payload: { fwd: Number.NaN, strafe: 0, turn: 0 } });
+    expect(m1.status(0).status).toBe("killed");
+    expect(m1.status(0).detail).toContain("protocol violation");
+    m1.dispose();
+
+    // unknown message type
+    const bad2 = new FakeHost(sampleCode);
+    const m2 = new AutonomyManager(core, () => bad2);
+    m2.attach(0, sampleCode);
+    bad2.emit({ type: "selfDestruct" });
+    expect(m2.status(0).status).toBe("killed");
+    m2.dispose();
+
+    // wrong payload shape (extra property)
+    const bad3 = new FakeHost(sampleCode);
+    const m3 = new AutonomyManager(core, () => bad3);
+    m3.attach(0, sampleCode);
+    bad3.emit({ type: "axes", payload: { fwd: 1, strafe: 0, turn: 0, boost: true } });
+    expect(m3.status(0).status).toBe("killed");
+    m3.dispose();
+
+    // non-object message
+    const bad4 = new FakeHost(sampleCode);
+    const m4 = new AutonomyManager(core, () => bad4);
+    m4.attach(0, sampleCode);
+    bad4.emit("hello");
+    expect(m4.status(0).status).toBe("killed");
+    m4.dispose();
+  });
+
+  it("release command respects the input gate", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+    core.placeObjectNearGripper(0);
+    core.enqueueGrabToggle(0);
+    core.advance(core.physics.fixedDt);
+    expect(core.gripStatus(0).holding).toBe(true);
+
+    core.inputGateEnabled = true;
+    core.injectCommand({ kind: "release", slot: 0 });
+    core.advance(core.physics.fixedDt);
+    expect(core.gripStatus(0).holding).toBe(true);
+
+    core.inputGateEnabled = false;
+    core.injectCommand({ kind: "release", slot: 0 });
+    core.advance(core.physics.fixedDt);
+    expect(core.gripStatus(0).holding).toBe(false);
+  });
+
+  it("respects the input gate during setup phase", async () => {    vi.useRealTimers();
     const { core, match } = setupWithMatch();
     const manager = new AutonomyManager(core, (code) => new FakeHost(code));
     match.startMatch();

@@ -3,17 +3,15 @@ import type { HostFactory, ScriptHost, WorkerIn, WorkerOut } from "./autonomy";
 const WRAPPER_SOURCE = String.raw`
 let userTick = null;
 let userApi = null;
-let slot = 0;
 function send(msg) { self.postMessage(msg); }
 self.onmessage = (e) => {
   const msg = e.data;
   if (msg.type === "init") {
-    slot = msg.slot ?? 0;
     try {
       userApi = {
-        setAxes(fwd, strafe, turn) { send({ type: "axes", slot, payload: { fwd, strafe, turn } }); },
-        grabToggle() { send({ type: "grabToggle", slot }); },
-        release() { send({ type: "release", slot }); },
+        setAxes(fwd, strafe, turn) { send({ type: "axes", payload: { fwd, strafe, turn } }); },
+        grabToggle() { send({ type: "grabToggle" }); },
+        release() { send({ type: "release" }); },
         log(message) { send({ type: "log", message: String(message) }); },
       };
       userTick = new Function(msg.code + "\n;return typeof onTick === \"function\" ? onTick : null;")();

@@ -12,9 +12,9 @@ export interface WorkerIn {
 export type WorkerOut =
   | { type: "ready" }
   | { type: "heartbeat"; tick: number }
-  | { type: "axes"; slot: number; payload: DriveCommand }
-  | { type: "grabToggle"; slot: number }
-  | { type: "release"; slot: number }
+  | { type: "axes"; payload: DriveCommand }
+  | { type: "grabToggle" }
+  | { type: "release" }
   | { type: "log"; message: string }
   | { type: "error"; message: string };
 
@@ -37,6 +37,24 @@ const STALL_LIMIT_MS = 750;
 const WATCHDOG_INTERVAL_MS = 120;
 const MAX_MESSAGES_PER_TICK = 24;
 
+function clampAxis(v: number): number {
+  return v < -1 ? -1 : v > 1 ? 1 : v;
+}
+
+function isFiniteAxes(payload: unknown): payload is DriveCommand {
+  if (typeof payload !== "object" || payload === null) return false;
+  const p = payload as Record<string, unknown>;
+  const keys = Object.keys(p);
+  if (keys.length !== 3 || !keys.every((k) => k === "fwd" || k === "strafe" || k === "turn")) {
+    return false;
+  }
+  return (
+    typeof p.fwd === "number" && Number.isFinite(p.fwd) &&
+    typeof p.strafe === "number" && Number.isFinite(p.strafe) &&
+    typeof p.turn === "number" && Number.isFinite(p.turn)
+  );
+}
+
 export class AutonomyManager {
   private core: SimulationCore;
   private factory: HostFactory;
@@ -44,6 +62,9 @@ export class AutonomyManager {
   private states = new Map<number, AutonomyState>();
   private lastSeen = new Map<number, number>();
   private msgCount = new Map<number, number>();
+  private awaitingTick = new Map<number, boolean>();
+  private everResponded = new Set<number>();
+  private watchdogPaused = false;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private sensorOpts: SensorOptions;
 
@@ -90,6 +111,8 @@ export class AutonomyManager {
     }
     this.lastSeen.delete(slot);
     this.msgCount.delete(slot);
+    this.awaitingTick.delete(slot);
+    this.everResponded.delete(slot);
   }
 
   dispose(): void {
@@ -98,37 +121,67 @@ export class AutonomyManager {
     this.watchdogTimer = null;
   }
 
-  private handleMessage(slot: number, msg: WorkerOut): void {
-    this.lastSeen.set(slot, Date.now());
-    const count = (this.msgCount.get(slot) ?? 0) + 1;
-    this.msgCount.set(slot, count);
-    if (count > MAX_MESSAGES_PER_TICK) {
-      this.kill(slot, "command spam limit exceeded");
+  private handleMessage(boundSlot: number, msg: unknown): void {
+    if (typeof msg !== "object" || msg === null || typeof (msg as { type?: unknown }).type !== "string") {
+      this.kill(boundSlot, "protocol violation: malformed message");
       return;
     }
-    switch (msg.type) {
+    const count = (this.msgCount.get(boundSlot) ?? 0) + 1;
+    this.msgCount.set(boundSlot, count);
+    if (count > MAX_MESSAGES_PER_TICK) {
+      this.kill(boundSlot, "command spam limit exceeded");
+      return;
+    }
+    const m = msg as WorkerOut;
+    this.lastSeen.set(boundSlot, Date.now());
+    this.awaitingTick.delete(boundSlot);
+    this.everResponded.add(boundSlot);
+    switch (m.type) {
       case "ready":
-        if (this.states.get(slot)?.status === "booting") {
-          this.states.set(slot, { status: "running", detail: "" });
+        if (this.states.get(boundSlot)?.status === "booting") {
+          this.states.set(boundSlot, { status: "running", detail: "" });
         }
         break;
       case "heartbeat":
         break;
-      case "axes":
-        this.core.setAxesFromInput(msg.slot, msg.payload);
+      case "axes": {
+        this.lastSeen.set(boundSlot, Date.now());
+        this.awaitingTick.delete(boundSlot);
+        const payload = (m as { payload?: unknown }).payload;
+        if (!isFiniteAxes(payload)) {
+          this.kill(boundSlot, "protocol violation: invalid axes payload");
+          return;
+        }
+        const p = payload as DriveCommand;
+        this.core.setAxesFromInput(boundSlot, {
+          fwd: clampAxis(p.fwd),
+          strafe: clampAxis(p.strafe),
+          turn: clampAxis(p.turn),
+        });
         break;
+      }
       case "grabToggle":
-        this.core.enqueueGrabToggle(msg.slot);
+        this.lastSeen.set(boundSlot, Date.now());
+        this.awaitingTick.delete(boundSlot);
+        this.core.enqueueGrabToggle(boundSlot);
         break;
       case "release":
-        this.core.injectCommand({ kind: "release", slot: msg.slot });
+        this.lastSeen.set(boundSlot, Date.now());
+        this.awaitingTick.delete(boundSlot);
+        this.core.injectCommand({ kind: "release", slot: boundSlot });
         break;
       case "log":
-        this.states.set(slot, { status: this.states.get(slot)?.status ?? "running", detail: msg.message.slice(0, 200) });
+        this.lastSeen.set(boundSlot, Date.now());
+        this.states.set(boundSlot, {
+          status: this.states.get(boundSlot)?.status ?? "running",
+          detail: String((m as { message?: unknown }).message ?? "").slice(0, 200),
+        });
         break;
       case "error":
-        this.kill(slot, msg.message.slice(0, 300));
+        this.kill(boundSlot, String((m as { message?: unknown }).message ?? "").slice(0, 300));
         break;
+      default:
+        this.kill(boundSlot, `protocol violation: unknown message type`);
     }
   }
 
@@ -143,11 +196,26 @@ export class AutonomyManager {
     this.states.set(slot, { status: "killed", detail: reason });
     this.lastSeen.delete(slot);
     this.msgCount.delete(slot);
+    this.awaitingTick.delete(slot);
+  }
+
+  suspendWatchdog(): void {
+    this.watchdogPaused = true;
+  }
+
+  resumeWatchdog(): void {
+    this.watchdogPaused = false;
+    const now = Date.now();
+    for (const [slot] of this.hosts) this.lastSeen.set(slot, now);
   }
 
   private checkStalls(): void {
+    if (this.watchdogPaused) return;
     const now = Date.now();
     for (const [slot] of this.hosts) {
+      const hasOutstandingTick = this.awaitingTick.get(slot) === true;
+      const neverResponded = !this.everResponded.has(slot);
+      if (!hasOutstandingTick && !neverResponded) continue;
       const seen = this.lastSeen.get(slot) ?? 0;
       if (now - seen > STALL_LIMIT_MS) {
         this.kill(slot, `no response for ${STALL_LIMIT_MS}ms — terminated by watchdog`);
@@ -161,6 +229,7 @@ export class AutonomyManager {
       const frame = buildSenseFrame(this.core, slot, this.sensorOpts);
       if (!frame) continue;
       host.post({ type: "tick", sense: frame, slot });
+      this.awaitingTick.set(slot, true);
     }
   }
 }
