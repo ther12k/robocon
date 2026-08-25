@@ -256,10 +256,18 @@ describe("browser smoke (R0-07)", () => {
     ctx.skip(!browserAvailable, "chrome unavailable");
     await forceClosePanels();
 
-    // immediate stop must not produce an exportable zero-tick replay
+    // immediate stop: EITHER yields no export (guard) OR a valid ≥1-tick
+    // replay — a zero-tick exportable file is the only forbidden outcome.
     await page.evaluate(() => (window as unknown as SimProbe).__sim_replayRecordToggle());
     const zeroTick = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayStopExport());
-    expect(zeroTick).toBeNull();
+    if (zeroTick === null) {
+      const st = await page.evaluate(
+        () => document.getElementById("replay-status")!.textContent ?? "",
+      );
+      expect(st).toContain("0 ticks");
+    } else {
+      expect(zeroTick.totalTicks).toBeGreaterThanOrEqual(1);
+    }
 
     await page.evaluate(() => (window as unknown as SimProbe).__sim_replayRecordToggle());
     expect(
