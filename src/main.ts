@@ -32,6 +32,7 @@ import {
   validateArenaRuntime,
   validateCompetitionRulesetRuntime,
   validateSimulationProfileRuntime,
+  validateConfigCrossReferences,
 } from "./sim/runtimeConfig";
 
 type AppPhase = "loading" | "ready" | "failed";
@@ -323,8 +324,11 @@ function startReplayRecording(): void {
 function startMatchRecording(): void {
   if (!core || !match || replayUi !== "idle" || !requireIdleMatch()) return;
   core.resetForReplay();
-  core.beginReplayCapture(60);
+  // Kick off first — the domain guard rejects startMatch while recording is
+  // active, and both resets land on the identical pristine state before the
+  // first fixed step, so the capture's initial hash stays valid.
   match.startMatch();
+  core.beginReplayCapture(60);
   replayRecordingMatch = true;
   replayUi = "recording";
   updateReplayButtons();
@@ -625,7 +629,7 @@ function updateScoreboard(): void {
   const secs = Math.ceil(match.timeRemainingSec);
   matchTimerEl.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
   const team = core?.slotTeam(activeSlot);
-  retriesEl.textContent = team ? `Retry ${match.retriesFor(team)}/3` : "";
+  retriesEl.textContent = team ? `Retry ${match.retriesFor(team)}/${match.maxRetriesPerTeam}` : "";
 
   if (phase === "ended" && bannerShownForPhase !== "ended") {
     bannerShownForPhase = "ended";
@@ -661,7 +665,8 @@ function setActiveSlot(index: number): void {
   const count = activeSlotCount();
   if (count === 0) return;
   activeSlot = ((index % count) + count) % count;
-  rig?.setFollow(rig.isFollowing() ? null : `robot-${activeSlot}`);
+  // Follow mode persists across slot switches — retarget, never toggle.
+  if (rig?.isFollowing()) rig.setFollow(`robot-${activeSlot}`);
   updateFollowButton();
   if (!scriptPanel.hidden) scriptSlotEl.textContent = String(activeSlot + 1);
 }
@@ -723,8 +728,17 @@ btnMeasure.addEventListener("click", () => {
   measure.setEnabled(active);
 });
 
+function canStartMatch(): boolean {
+  return replayUi === "idle" && (!match || match.phase === "idle" || match.phase === "ended");
+}
+
+function canMutateRobot(): boolean {
+  return replayUi === "idle" && (!match || match.phase === "idle");
+}
+
 function startMatch(): void {
   if (phase !== "ready" || !match || !core) return;
+  if (!canStartMatch()) return; // recording/playback or live match owns the timeline
   match.startMatch();
   scoreboardEl.hidden = false;
   matchBanner.hidden = true;
@@ -742,12 +756,19 @@ btnBuilder.addEventListener("click", () => {
 
 window.addEventListener("keydown", (e) => {
   if (phase !== "ready") return;
-  const targetEditable =
-    e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement ||
-    (e.target instanceof HTMLElement && e.target.isContentEditable);
-  // Typing must never trigger global shortcuts — except Escape, which always
-  // cancels/closes whatever context the user is in.
-  if (targetEditable && e.key !== "Escape") return;
+  const target = e.target instanceof HTMLElement ? e.target : null;
+  const typingInField =
+    target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement ||
+    target instanceof HTMLSelectElement ||
+    (target !== null && target.isContentEditable);
+  // Typing must never trigger global shortcuts — except Escape (cancel).
+  if (typingInField && e.key !== "Escape") return;
+  // Enter/Space on an activator control lets the browser handle it natively;
+  // the global shortcut must not double-fire (e.g. Enter starting a match).
+  const onActivator =
+    !typingInField && target !== null &&
+    target.closest("button, a, [role='button']") !== null;
+  if (onActivator && (e.key === "Enter" || e.key === " ")) return;
   if (e.key === `Enter`) {
     startMatch();
     return;
@@ -802,6 +823,7 @@ async function main(): Promise<void> {
   assertConfigOk("arena", validateArenaRuntime(arena));
   assertConfigOk("competition ruleset", validateCompetitionRulesetRuntime(competition));
   assertConfigOk("simulation profile", validateSimulationProfileRuntime(profile));
+  assertConfigOk("arena/ruleset cross-references", validateConfigCrossReferences(arena, competition));
 
   validationCtx = {
     roles: competition.robots,
@@ -839,6 +861,11 @@ async function main(): Promise<void> {
     loadJson<RobotSpec>("robots/preset-r1.json"),
     loadJson<RobotSpec>("robots/preset-r2.json"),
   ]);
+  // presets are config too — validate against the role constraints at boot
+  presetSpecs.forEach((spec, i) => {
+    const res = validateSpec(spec, validationCtx!);
+    assertConfigOk(`preset ${i + 1} (${spec.name})`, res.issues.filter((x) => x.level === "error").map((e) => `[${e.field}] ${e.message}`));
+  });
 
   rig = new CameraRig(canvas, arena);
   rig.setEntityResolver((id) => core?.physics.getEntityTransform(id) ?? null);
@@ -852,12 +879,19 @@ async function main(): Promise<void> {
     slotCount: activeSlotCount(),
     slotLabel: (i) => `S${i + 1}: ${core?.getSpec(i)?.name ?? "?"}`,
     getSpecText: (i) => JSON.stringify(core?.getSpec(i) ?? {}, null, 2),
-    onApply: (slot, spec) => spawnSlot(slot, spec),
-    preApplyIssues: (slot, spec) =>
-      validateTeamMass(
+    onApply: (slot, spec) => {
+      if (!canMutateRobot()) return; // preApplyIssues already surfaces the reason
+      spawnSlot(slot, spec);
+    },
+    preApplyIssues: (slot, spec) => [
+      ...(canMutateRobot()
+        ? []
+        : [{ level: "error" as const, field: "", message: "cannot apply while a match or replay is active" }]),
+      ...validateTeamMass(
         presetSlots().map((i) => (i === slot ? spec : core?.getSpec(i))),
         competition.teamWeightBudgetKg,
       ),
+    ],
     postApplyIssues: () =>
       validateTeamMass(
         presetSlots().map((i) => core?.getSpec(i)),
@@ -959,6 +993,7 @@ interface SimProbe {
   __sim_replayPlay(): { ok: boolean };
   __sim_telemetryCount(): number;
   __sim_replayShareLink(): Promise<string | null>;
+  __sim_isFollowing(): boolean;
 }
 
 function installProbe(): void {
@@ -1000,6 +1035,7 @@ function installProbe(): void {
     replayLoadedFile
       ? buildReplayShareUrl(replayLoadedFile, `${location.origin}${location.pathname}`)
       : null;
+  w.__sim_isFollowing = () => rig?.isFollowing() ?? false;
 }
 
 main().catch((err) => {

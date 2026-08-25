@@ -23,6 +23,7 @@ interface SimProbe {
   __sim_replayPlay(): { ok: boolean };
   __sim_telemetryCount(): number;
   __sim_replayShareLink(): Promise<string | null>;
+  __sim_isFollowing(): boolean;
 }
 
 const PORT = 4173;
@@ -343,6 +344,46 @@ describe("browser smoke (R0-07)", () => {
     expect(state.matchPhase).not.toBe("IDLE");
     expect(state.scoreboardHidden).toBe(false);
     expect(Number.isNaN(state.speed)).toBe(false);
+  });
+
+  it("follow mode persists across slot switches and Enter on a button never starts a match", async (ctx) => {
+    ctx.skip(!browserAvailable, "chrome unavailable");
+    await forceClosePanels();
+
+    // enable follow on slot 0
+    await page.keyboard.press("KeyF");
+    expect(await page.evaluate(() => (window as unknown as SimProbe).__sim_isFollowing())).toBe(true);
+
+    // switch to slot 1 — follow must retarget, not toggle off
+    await page.keyboard.press("Tab");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(await page.evaluate(() => (window as unknown as SimProbe).__sim_isFollowing())).toBe(true);
+
+    // Enter pressed while a button is focused activates that control only —
+    // the global shortcut must not also start a match.
+    const phaseBefore = await page.evaluate(
+      () => document.getElementById("match-phase")!.textContent,
+    );
+    await page.evaluate(() => {
+      const b = document.getElementById("replay-close") as HTMLButtonElement;
+      if (document.getElementById("replay-panel")!.hidden) {
+        (document.getElementById("btn-replay") as HTMLButtonElement).click();
+      }
+      b.focus();
+    });
+    await page.keyboard.press("Enter");
+    await new Promise((r) => setTimeout(r, 200));
+    const phaseAfter = await page.evaluate(
+      () => document.getElementById("match-phase")!.textContent,
+    );
+    expect(phaseAfter).toBe(phaseBefore); // untouched
+
+    await page.keyboard.press("KeyF");
+    await page.evaluate(() => {
+      if (!document.getElementById("replay-panel")!.hidden) {
+        (document.getElementById("btn-replay") as HTMLButtonElement).click();
+      }
+    });
   });
 
   it("status panels render worker and replay metadata as text, not HTML", async (ctx) => {

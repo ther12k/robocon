@@ -31,6 +31,7 @@ export class MatchController {
   private ticksLeftInPhase = 0;
   private scores: Record<Team, number> = { red: 0, blue: 0 };
   private retriesLeft: Record<Team, number> = { red: 0, blue: 0 };
+  private maxRetries = 0;
   private winnerTeam: Team | null = null;
   private log: ScoreLogEntry[] = [];
   private scoredKeys = new Set<string>();
@@ -79,11 +80,22 @@ export class MatchController {
     return this.retriesLeft[team];
   }
 
+  get maxRetriesPerTeam(): number {
+    return this.maxRetries;
+  }
+
   startMatch(): void {
     if (this._phase === "setup" || this._phase === "countdown" || this._phase === "playing") {
       return; // a match is already in flight — ignore restart spam
     }
+    // Recording/playback own the world timeline — a match would reset the
+    // tick counter and corrupt both. The UI guards this too, but enforce it
+    // at the domain boundary so no caller can bypass it.
+    if (this.core.bus.isRecording() || this.core.isReplayPlaybackActive()) {
+      return;
+    }
     const match = this.rules.match ?? { setupSec: 60, playSec: 180, retriesPerTeam: 3 };
+    this.maxRetries = match.retriesPerTeam ?? 3;
     this._phase = "setup";
     this.scores = { red: 0, blue: 0 };
     this.retriesLeft = { red: match.retriesPerTeam, blue: match.retriesPerTeam };
@@ -287,6 +299,11 @@ export class MatchController {
               this.endMatch(otherTeam(team), `${team} exhausted retries`);
               return;
             }
+          } else if (rule.effect === "warning") {
+            // violation entry above is the whole consequence — log only
+          } else if (rule.effect === "disqualify") {
+            this.endMatch(otherTeam(team), `${team} disqualified (${rule.id})`);
+            return;
           }
         }
       }

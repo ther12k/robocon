@@ -85,8 +85,15 @@ export function validateCompetitionRulesetRuntime(data: unknown): string[] {
         const e = v as Record<string, unknown>;
         if (e.type !== "outOfBounds") errors.push(`violations[${i}].type unsupported`);
         if (!isFinitePositive(e.marginM)) errors.push(`violations[${i}].marginM must be > 0`);
-        if (e.effect !== "retry" && e.effect !== "disqualify") {
-          errors.push(`violations[${i}].effect must be "retry" or "disqualify"`);
+        if (e.effect !== "retry" && e.effect !== "warning" && e.effect !== "disqualify") {
+          errors.push(`violations[${i}].effect must be "retry", "warning", or "disqualify"`);
+        }
+        if (typeof e.id !== "string" || (e.id as string).length === 0) {
+          errors.push(`violations[${i}].id must be a non-empty string`);
+        }
+        // team only meaningful for retry/warning; validated as enum anyway
+        if (e.team !== undefined && e.team !== "red" && e.team !== "blue") {
+          errors.push(`violations[${i}].team must be "red" or "blue" when present`);
         }
       }
     }
@@ -119,6 +126,89 @@ export function validateSimulationProfileRuntime(data: unknown): string[] {
 }
 
 const ALLOWED_INITIAL_STATES = new Set(["idle"]);
+
+function finitePose(pose: unknown, path: string, errors: string[]): void {
+  if (typeof pose !== "object" || pose === null) {
+    errors.push(`${path} must be an object`);
+    return;
+  }
+  const p = pose as Record<string, unknown>;
+  for (const k of ["x", "y", "z"] as const) {
+    if (typeof p[k] !== "number" || !Number.isFinite(p[k])) {
+      errors.push(`${path}.${k} must be a finite number`);
+    }
+  }
+}
+
+/** Cross-references arena ↔ ruleset that neither file can validate alone. */
+export function validateConfigCrossReferences(
+  arena: unknown,
+  ruleset: unknown,
+): string[] {
+  const errors: string[] = [];
+  if (typeof arena !== "object" || arena === null || typeof ruleset !== "object" || ruleset === null) {
+    return ["arena and ruleset must be objects"];
+  }
+  const a = arena as Record<string, unknown>;
+  const r = ruleset as Record<string, unknown>;
+
+  const idSet = (list: unknown, label: string): Set<string> => {
+    const ids = new Set<string>();
+    if (!Array.isArray(list)) return ids;
+    for (const entry of list as unknown[]) {
+      const id = (entry as { id?: unknown })?.id;
+      if (typeof id !== "string") continue;
+      if (ids.has(id)) errors.push(`duplicate ${label} id: ${id}`);
+      ids.add(id);
+    }
+    return ids;
+  };
+  const triggerIds = idSet(a.triggers, "trigger");
+  const typeIds = new Set<string>();
+  if (Array.isArray(a.objectSpawns)) {
+    for (const s of a.objectSpawns as unknown[]) {
+      const t = (s as { typeId?: unknown })?.typeId;
+      if (typeof t === "string") typeIds.add(t);
+      finitePose((s as { pose?: unknown })?.pose, "objectSpawn pose", errors);
+    }
+  }
+
+  if (Array.isArray(r.scoring)) {
+    for (const s of r.scoring as unknown[]) {
+      const rule = s as { triggerId?: unknown; team?: unknown };
+      if (rule.team !== "red" && rule.team !== "blue") {
+        errors.push(`scoring team must be "red" or "blue"`);
+      }
+      if (typeof rule.triggerId === "string" && !triggerIds.has(rule.triggerId)) {
+        errors.push(`scoring references unknown trigger "${String(rule.triggerId)}"`);
+      }
+    }
+  }
+
+  if (Array.isArray(a.targets)) {
+    for (const t of a.targets as unknown[]) {
+      const tgt = t as Record<string, unknown>;
+      if (
+        tgt.triggerId !== undefined &&
+        (typeof tgt.triggerId !== "string" || !triggerIds.has(tgt.triggerId))
+      ) {
+        errors.push(`target ${String(tgt.id)} references unknown trigger`);
+      }
+      if (!Array.isArray(tgt.accepts) || (tgt.accepts as unknown[]).length === 0) {
+        errors.push(`target ${String(tgt.id)} must accept at least one object type`);
+      } else {
+        for (const acc of tgt.accepts as unknown[]) {
+          if (!typeIds.has(String(acc))) {
+            errors.push(`target ${String(tgt.id)} accepts unknown type "${String(acc)}"`);
+          }
+        }
+      }
+      finitePose(tgt.pose, `target ${String(tgt.id)} pose`, errors);
+    }
+  }
+
+  return [...new Set(errors)];
+}
 
 export function validateArenaRuntime(data: unknown): string[] {
   const errors: string[] = [];

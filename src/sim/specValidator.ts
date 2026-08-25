@@ -218,7 +218,7 @@ export function validateTeamMass(specs: Array<RobotSpec | undefined>, budgetKg: 
   for (const [team, total] of byTeam) {
     if (total > budgetKg) {
       issues.push({
-        level: "warning",
+        level: "error",
         field: `team.${team}.mass`,
         message: `${team} team total ${total.toFixed(1)} kg exceeds budget ${budgetKg} kg`,
       });

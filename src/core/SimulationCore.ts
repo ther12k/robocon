@@ -375,7 +375,7 @@ export class SimulationCore {
     this.replayCheckpoints = [];
     this.lastRecordedHash = "";
     this.checkpointIntervalTicks = checkpointIntervalTicks;
-    this.initialStateAtCapture = this.stateHash();
+    this.initialStateAtCapture = this.stateHash({ includeMatch: false });
   }
 
   endReplayCapture(opts: { matchStarted?: boolean } = {}): ReplayFile {
@@ -410,7 +410,8 @@ export class SimulationCore {
       wasmHash: WASM_HASH,
       fixedDt: this.physics.fixedDt,
       configHashes: this.configHashes(),
-      initialStateHash: this.stateHash(),
+      // physics-pure initial state — pristine clones have no match provider
+      initialStateHash: this.stateHash({ includeMatch: false }),
     };
   }
 
@@ -650,14 +651,14 @@ export class SimulationCore {
     };
   }
 
-  stateHash(): string {
+  stateHash(opts: { includeMatch?: boolean } = {}): string {
     const snap = this.snapshot();
     return fnv1a(JSON.stringify({
       entities: snap.entities,
       holds: snap.holds,
       velocities: this.velocitySamples(),
       objectStates: [...this.objectStates.entries()].sort((a, b) => a[0].localeCompare(b[0])),
-      match: this.matchInfo(),
+      match: opts.includeMatch === false ? undefined : this.matchInfo(),
     }));
   }
 

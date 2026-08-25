@@ -191,8 +191,9 @@ describe("versioned replay files (R1-06)", () => {
     core.addRobot(0, diffSpec);
     const match = new MatchController(core, competition);
     core.resetForReplay();
-    core.beginReplayCapture(30);
+    // kick off before capture — both land on identical pristine state
     match.startMatch();
+    core.beginReplayCapture(30);
 
     for (let t = 0; t < 8; t++) {
       core.setAxesFromInput(0, { fwd: 1, strafe: 1, turn: 1 });

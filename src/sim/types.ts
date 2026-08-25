@@ -166,7 +166,7 @@ export interface AbsoluteWinRule {
   points: number;
 }
 
-export type ViolationEffect = "retry" | "warning";
+export type ViolationEffect = "retry" | "warning" | "disqualify";
 
 export interface ViolationRule {
   id: string;
