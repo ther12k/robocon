@@ -48,6 +48,8 @@ const MAX_TOTAL_TICKS = 10_000_000;
 const MAX_COMMANDS = 200_000;
 const MAX_CHECKPOINTS = 200_000;
 const MAX_LABEL_LEN = 64;
+/** Validation stops early once this many issues have accumulated. */
+const MAX_VALIDATION_ERRORS = 100;
 
 function isHexHash(v: unknown, len = 8): boolean {
   return typeof v === "string" && v.length === len && /^[0-9a-f]+$/.test(v);
@@ -162,10 +164,16 @@ export function parseReplayFile(data: unknown): ParseResult {
   if (!Array.isArray(f.checkpoints)) {
     errors.push("checkpoints must be an array");
   } else {
-    if (f.checkpoints.length > Math.min(MAX_CHECKPOINTS, Math.ceil(totalTicks / interval) + 2)) {
-      errors.push("too many checkpoints");
+    const allowedCheckpoints = Math.min(MAX_CHECKPOINTS, Math.ceil(totalTicks / interval) + 2);
+    if (f.checkpoints.length > allowedCheckpoints) {
+      // early-return: never iterate attacker-sized arrays
+      return {
+        ok: false,
+        errors: [`too many checkpoints (${f.checkpoints.length}, limit ${allowedCheckpoints})`],
+      };
     }
     for (const cp of f.checkpoints as unknown[]) {
+      if (errors.length >= MAX_VALIDATION_ERRORS) break;
       if (typeof cp !== "object" || cp === null) {
         errors.push("checkpoint must be an object");
         continue;

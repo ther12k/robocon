@@ -58,17 +58,14 @@ export class CommandBus {
     }
   }
 
-  /** Applies an external command immediately and records it against the next
-   * tick boundary (the first step its effects can influence). */
+  /**
+   * Stages an external command (autonomy scripts, tooling) through the same
+   * queue as live input: it is applied during the NEXT fixed step's pre-phase
+   * and recorded against that step's tick (`currentTick + 1`) — matching the
+   * step whose simulation actually absorbs its effects.
+   */
   inject(action: CommandAction): void {
-    let entry: RecordedCommand | null = null;
-    if (this.history) {
-      entry = { tick: this.currentTick + 1, action, ok: false };
-      this.history.push(entry);
-    }
-    const applied = this.handler?.(action, this.currentTick);
-    if (entry) entry.ok = applied !== false;
-    this.markDelivered(action, applied !== false);
+    this.enqueue(action, { tick: this.currentTick + 1 });
   }
 
   private markDelivered(action: CommandAction, applied: boolean): void {

@@ -289,16 +289,18 @@ function setReplayStatus(entries: Array<{ cls: StatusTone; text: string }>): voi
 function updateReplayButtons(): void {
   const recording = replayUi === "recording";
   const playing = replayUi === "playing";
-  replayRecordBtn.classList.toggle("recording", recording && !replayRecordingMatch);
-  replayRecordBtn.textContent = recording && !replayRecordingMatch ? "■ Stop & Export" : "● Record";
-  replayRecordMatchBtn.classList.toggle("recording", recording && replayRecordingMatch);
-  replayRecordMatchBtn.textContent = recording && replayRecordingMatch ? "■ Stop & Export" : "● Record Match";
-  replayRecordBtn.disabled = playing;
-  replayRecordMatchBtn.disabled = playing;
+  const ownerNormal = recording && !replayRecordingMatch;
+  const ownerMatch = recording && replayRecordingMatch;
+  replayRecordBtn.classList.toggle("recording", ownerNormal);
+  replayRecordBtn.textContent = ownerNormal ? "■ Stop & Export" : "● Record";
+  replayRecordMatchBtn.classList.toggle("recording", ownerMatch);
+  replayRecordMatchBtn.textContent = ownerMatch ? "■ Stop & Export" : "● Record Match";
+  // only the session owner may stop its own recording
+  replayRecordBtn.disabled = playing || ownerMatch;
+  replayRecordMatchBtn.disabled = playing || ownerNormal;
   replayPlayBtn.disabled = playing || recording || !replayLoadedFile;
   replayStopBtn.disabled = !playing;
   replayLoadBtn.disabled = playing || recording;
-  replayShareBtn.disabled = playing || recording || !replayLoadedFile;
 }
 
 function requireIdleMatch(): boolean {
@@ -347,7 +349,7 @@ function downloadJson(data: unknown, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-function stopReplayRecording(opts: { download?: boolean } = {}): ReplayFile | null {
+function stopReplayRecording(opts: { download?: boolean } = { download: true }): ReplayFile | null {
   if (!core || replayUi !== "recording") return null;
   const file = core.endReplayCapture({ matchStarted: replayRecordingMatch });
   replayRecordingMatch = false;
@@ -405,16 +407,17 @@ function loadReplayText(text: string): { ok: boolean } {
 
 function playReplay(): void {
   if (!core || !replayLoadedFile || replayUi !== "idle") return;
-  if (match && match.phase === "ended") match.resetMatchToIdle(); // allow instant replay after a match
-  if (!requireIdleMatch()) return;
-  if (replayLoadedFile.matchStarted && !match) {
-    setReplayStatus([{ cls: "err", text: "this replay needs a match session — match controller unavailable" }]);
-    return;
-  }
-  // validate non-destructively BEFORE any state mutation
+  // validate non-destructively BEFORE any state mutation (including clearing
+  // an ended match's scoreboard)
   const issues = core.validateReplay(replayLoadedFile);
   if (issues.length > 0) {
     setReplayStatus(issues.map((i) => ({ cls: "err", text: `${i.field}: ${i.message}` })));
+    return;
+  }
+  if (!requireIdleMatch()) return;
+  if (match && match.phase === "ended") match.resetMatchToIdle(); // allow instant replay after a match
+  if (replayLoadedFile.matchStarted && !match) {
+    setReplayStatus([{ cls: "err", text: "this replay needs a match session — match controller unavailable" }]);
     return;
   }
   if (replayLoadedFile.matchStarted) match!.startMatch();
@@ -445,14 +448,21 @@ replayCloseBtn.addEventListener("click", () => {
 
 replayRecordBtn.addEventListener("click", () => {
   if (phase !== "ready") return;
-  if (replayUi === "recording") stopReplayRecording();
-  else startReplayRecording();
+  if (replayUi === "recording") {
+    // only the owner stops its own session
+    if (!replayRecordingMatch) stopReplayRecording();
+    return;
+  }
+  startReplayRecording();
 });
 
 replayRecordMatchBtn.addEventListener("click", () => {
   if (phase !== "ready") return;
-  if (replayUi === "recording" && replayRecordingMatch) stopReplayRecording();
-  else startMatchRecording();
+  if (replayUi === "recording") {
+    if (replayRecordingMatch) stopReplayRecording();
+    return;
+  }
+  startMatchRecording();
 });
 
 replayLoadBtn.addEventListener("click", () => replayFileInput.click());

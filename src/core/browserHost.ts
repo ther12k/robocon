@@ -2,18 +2,11 @@ import type { HostFactory, ScriptHost, WorkerIn, WorkerOut } from "./autonomy";
 
 const WRAPPER_SOURCE = String.raw`
 let userTick = null;
-let userApi = null;
 function send(msg) { self.postMessage(msg); }
 self.onmessage = (e) => {
   const msg = e.data;
   if (msg.type === "init") {
     try {
-      userApi = {
-        setAxes(fwd, strafe, turn) { send({ type: "axes", payload: { fwd, strafe, turn } }); },
-        grabToggle() { send({ type: "grabToggle" }); },
-        release() { send({ type: "release" }); },
-        log(message) { send({ type: "log", message: String(message) }); },
-      };
       userTick = new Function(msg.code + "\n;return typeof onTick === \"function\" ? onTick : null;")();
       if (typeof userTick !== "function") {
         send({ type: "error", message: "script must define function onTick(sense, api)" });
@@ -27,13 +20,27 @@ self.onmessage = (e) => {
   }
   if (msg.type === "tick") {
     if (!userTick || !msg.sense) return;
+    // Per-tick API closure — every message carries the originating tick id so
+    // the host can reject stale commands from previous ticks.
+    const api = {
+      setAxes(fwd, strafe, turn) { send({ type: "axes", id: msg.id, payload: { fwd, strafe, turn } }); },
+      grabToggle() { send({ type: "grabToggle", id: msg.id }); },
+      release() { send({ type: "release", id: msg.id }); },
+      log(message) { send({ type: "log", id: msg.id, message: String(message) }); },
+    };
     try {
-      userTick(msg.sense, userApi);
+      const result = userTick(msg.sense, api);
+      // Synchronous contract — a returned Promise means the callback deferred
+      // its work, which would make autonomy nondeterministic.
+      if (result && typeof result.then === "function") {
+        send({ type: "error", id: msg.id, message: "onTick must be synchronous" });
+        return;
+      }
       send({ type: "done", id: msg.id });
     } catch (err) {
       // error is the terminal response for this tick — the host kills the
-      // worker immediately, so a trailing done would be flagged unexpected.
-      send({ type: "error", message: "onTick: " + err.message });
+      // worker immediately, so no trailing done is sent.
+      send({ type: "error", id: msg.id, message: "onTick: " + err.message });
     }
   }
 };

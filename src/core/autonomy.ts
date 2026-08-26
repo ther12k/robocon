@@ -13,11 +13,11 @@ export interface WorkerIn {
 
 export type WorkerOut =
   | { type: "ready" }
-  | { type: "axes"; payload: DriveCommand }
-  | { type: "grabToggle" }
-  | { type: "release" }
-  | { type: "log"; message: string }
-  | { type: "error"; message: string }
+  | { type: "axes"; id: number; payload: DriveCommand }
+  | { type: "grabToggle"; id: number }
+  | { type: "release"; id: number }
+  | { type: "log"; id: number; message: string }
+  | { type: "error"; id: number; message: string }
   | { type: "done"; id: number };
 
 export interface ScriptHost {
@@ -130,14 +130,20 @@ export class AutonomyManager {
       return;
     }
     const m = msg as WorkerOut;
-    // Only actual commands consume the budget — ready/done/log/error are
-    // control traffic and arrive in bursts on slow renderers.
-    if (m.type === "axes" || m.type === "grabToggle" || m.type === "release") {
-      const count = (this.msgCount.get(boundSlot) ?? 0) + 1;
-      this.msgCount.set(boundSlot, count);
-      if (count > MAX_COMMANDS_PER_TICK) {
-        this.kill(boundSlot, `command spam limit exceeded (${MAX_COMMANDS_PER_TICK} commands per tick)`);
+    console.log("HM", boundSlot, m.type, "id", (m as {id?:unknown}).id, "expected", this.lastSentTickId.get(boundSlot));
+    // Every post-ready message must carry the id of the outstanding tick.
+    if (m.type !== "ready") {
+      if (m.id !== this.lastSentTickId.get(boundSlot)) {
+        this.kill(boundSlot, "protocol violation: stale or unknown tick id");
         return;
+      }
+      if (this.awaitingTick.get(boundSlot) !== true && m.type !== "log") {
+        // log is allowed while idle (script may emit during gaps), but
+        // commands and done require an outstanding tick.
+        if (m.type !== "error") {
+          this.kill(boundSlot, "protocol violation: message without outstanding tick");
+          return;
+        }
       }
     }
     switch (m.type) {
@@ -147,24 +153,15 @@ export class AutonomyManager {
           this.states.set(boundSlot, { status: "running", detail: "" });
         }
         break;
-      case "done": {
-        const id = (m as { id?: unknown }).id;
-        const expected = this.lastSentTickId.get(boundSlot);
-        if (
-          typeof id !== "number" ||
-          this.awaitingTick.get(boundSlot) !== true ||
-          id !== expected
-        ) {
-          this.kill(boundSlot, "protocol violation: unexpected done");
-          return;
-        }
+      case "done":
         this.awaitingTick.delete(boundSlot);
         this.deadlines.delete(boundSlot);
         break;
-      }
       case "axes": {
-        if (this.awaitingTick.get(boundSlot) !== true) {
-          this.kill(boundSlot, "protocol violation: command without outstanding tick");
+        const c1 = (this.msgCount.get(boundSlot) ?? 0) + 1;
+        this.msgCount.set(boundSlot, c1);
+        if (c1 > MAX_COMMANDS_PER_TICK) {
+          this.kill(boundSlot, `command spam limit exceeded (${MAX_COMMANDS_PER_TICK} commands per tick)`);
           return;
         }
         const payload = (m as { payload?: unknown }).payload;
@@ -180,20 +177,26 @@ export class AutonomyManager {
         });
         break;
       }
-      case "grabToggle":
-        if (this.awaitingTick.get(boundSlot) !== true) {
-          this.kill(boundSlot, "protocol violation: command without outstanding tick");
+      case "grabToggle": {
+        const c2 = (this.msgCount.get(boundSlot) ?? 0) + 1;
+        this.msgCount.set(boundSlot, c2);
+        if (c2 > MAX_COMMANDS_PER_TICK) {
+          this.kill(boundSlot, `command spam limit exceeded (${MAX_COMMANDS_PER_TICK} commands per tick)`);
           return;
         }
         this.core.enqueueGrabToggle(boundSlot);
         break;
-      case "release":
-        if (this.awaitingTick.get(boundSlot) !== true) {
-          this.kill(boundSlot, "protocol violation: command without outstanding tick");
+      }
+      case "release": {
+        const c3 = (this.msgCount.get(boundSlot) ?? 0) + 1;
+        this.msgCount.set(boundSlot, c3);
+        if (c3 > MAX_COMMANDS_PER_TICK) {
+          this.kill(boundSlot, `command spam limit exceeded (${MAX_COMMANDS_PER_TICK} commands per tick)`);
           return;
         }
         this.core.injectCommand({ kind: "release", slot: boundSlot });
         break;
+      }
       case "log":
         this.states.set(boundSlot, {
           status: this.states.get(boundSlot)?.status ?? "running",

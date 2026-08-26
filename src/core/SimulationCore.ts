@@ -444,6 +444,17 @@ export class SimulationCore {
     }
   }
 
+  /** Zeroes stored drive axes and brakes robot velocities. Called on match
+   *  phase transitions (setup/countdown/ended) and operator stops so a stale
+   *  nonzero command can never keep applying force after the whistle. */
+  neutralizeActuators(): void {
+    for (const [, slot] of this.slots) {
+      slot.axes = { fwd: 0, strafe: 0, turn: 0 };
+      slot.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      slot.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
   resetForReplay(): void {
     const meshes = new Map<string, NonNullable<TrackedEntity["mesh"]>>();
     for (const id of this.physics.entityIds()) {

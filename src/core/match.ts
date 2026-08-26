@@ -105,6 +105,7 @@ export class MatchController {
     this.matchTick = 0;
     this.core.resetForReplay();
     this.core.setInputLock("match-phase", true);
+    this.core.neutralizeActuators();
     this.setPhase("setup", match.setupSec, `Match started — setup ${match.setupSec}s`);
   }
 
@@ -117,6 +118,7 @@ export class MatchController {
     this.log = [];
     this.scoredKeys.clear();
     this.matchTick = 0;
+    this.core.neutralizeActuators();
     this.core.setInputLock("match-phase", false);
   }
 
@@ -174,6 +176,7 @@ export class MatchController {
     const match = this.rules.match ?? { setupSec: 60, playSec: 180, retriesPerTeam: 3 };
     if (this._phase === "setup") {
       const countdownSec = match.countdownSec ?? DEFAULT_COUNTDOWN_SEC;
+      this.core.neutralizeActuators();
       this.setPhase("countdown", countdownSec, `Countdown ${countdownSec}s`);
     } else if (this._phase === "countdown") {
       this.core.setInputLock("match-phase", false);
@@ -184,6 +187,7 @@ export class MatchController {
   private endMatch(winner: Team | null, reason: string): void {
     this._phase = "ended";
     this.winnerTeam = winner;
+    this.core.neutralizeActuators();
     this.core.setInputLock("match-phase", true);
     this.log.push({
       tick: this.matchTick,

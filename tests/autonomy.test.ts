@@ -87,17 +87,17 @@ class FakeHost implements ScriptHost {
     const self = this;
     this.api = {
       setAxes(fwd: number, strafe: number, turn: number) {
-        self.handler?.({ type: "axes", payload: { fwd, strafe, turn } });
+        self.handler?.({ type: "axes", id: self.lastTickId ?? 0, payload: { fwd, strafe, turn } });
       },
       grabToggle() {
-        self.handler?.({ type: "grabToggle" });
+        self.handler?.({ type: "grabToggle", id: self.lastTickId ?? 0 });
       },
       release() {
-        self.handler?.({ type: "release" });
+        self.handler?.({ type: "release", id: self.lastTickId ?? 0 });
       },
       log(message: string) {
         self.apiLog.push(String(message));
-        self.handler?.({ type: "log", message: String(message) });
+        self.handler?.({ type: "log", id: self.lastTickId ?? 0, message: String(message) });
       },
     };
     const compiled = new Function(`${code}\n;return typeof onTick === "function" ? onTick : null;`)();
@@ -121,7 +121,7 @@ class FakeHost implements ScriptHost {
       try {
         this.userTick?.(msg.sense, this.api);
       } catch (err) {
-        this.handler?.({ type: "error", message: String(err) });
+        this.handler?.({ type: "error", id: msg.id ?? 0, message: String(err) });
       } finally {
         this.handler?.({ type: "done", id: msg.id ?? 0 });
       }
@@ -135,6 +135,20 @@ class FakeHost implements ScriptHost {
   /** Delivers a raw worker message as-if sent by the script. */
   emit(msg: unknown): void {
     this.handler?.(msg as WorkerOut);
+  }
+
+  /** Delivers a well-formed command stamped with the outstanding tick id. */
+  emitCommand(
+    kind: "axes" | "grabToggle" | "release",
+    payload?: { fwd: number; strafe: number; turn: number },
+    idOverride?: number,
+  ): void {
+    const id = idOverride ?? this.lastTickId ?? 0;
+    if (kind === "axes") {
+      this.handler?.({ type: "axes", id, payload: payload! } as unknown as WorkerOut);
+    } else {
+      this.handler?.({ type: kind, id } as unknown as WorkerOut);
+    }
   }
 
   /** Completes the outstanding tick (done{id}) without executing user code. */
@@ -231,7 +245,7 @@ describe("AutonomyManager (M4)", () => {
     for (let i = 0; i < 15; i++) core.advance(core.physics.fixedDt); // settle bodies
     const p0Before = core.getBody(0)!.translation();
     const p1Before = core.getBody(1)!.translation();
-    host.emit({ type: "axes", slot: 1, payload: { fwd: 1, strafe: 0, turn: 0 } });
+    host.emitCommand("axes", { fwd: 1, strafe: 0, turn: 0 });
     for (let i = 0; i < 30; i++) core.advance(core.physics.fixedDt);
 
     const p0 = core.getBody(0)!.translation();
@@ -250,7 +264,7 @@ describe("AutonomyManager (M4)", () => {
     const bad1 = new FakeHost(sampleCode);
     const m1 = new AutonomyManager(core, () => bad1);
     m1.attach(0, sampleCode);
-    bad1.emit({ type: "axes", payload: { fwd: Number.NaN, strafe: 0, turn: 0 } });
+    bad1.emit({ type: "axes", id: bad1.lastTickId ?? 0, payload: { fwd: Number.NaN, strafe: 0, turn: 0 } });
     expect(m1.status(0).status).toBe("killed");
     expect(m1.status(0).detail).toContain("protocol violation");
     m1.dispose();
@@ -259,7 +273,7 @@ describe("AutonomyManager (M4)", () => {
     const bad2 = new FakeHost(sampleCode);
     const m2 = new AutonomyManager(core, () => bad2);
     m2.attach(0, sampleCode);
-    bad2.emit({ type: "selfDestruct" });
+    bad2.emit({ type: "selfDestruct", id: 999999 });
     expect(m2.status(0).status).toBe("killed");
     m2.dispose();
 
@@ -267,7 +281,7 @@ describe("AutonomyManager (M4)", () => {
     const bad3 = new FakeHost(sampleCode);
     const m3 = new AutonomyManager(core, () => bad3);
     m3.attach(0, sampleCode);
-    bad3.emit({ type: "axes", payload: { fwd: 1, strafe: 0, turn: 0, boost: true } });
+    bad3.emit({ type: "axes", id: bad3.lastTickId ?? 0, payload: { fwd: 1, strafe: 0, turn: 0, boost: true } });
     expect(m3.status(0).status).toBe("killed");
     m3.dispose();
 
@@ -356,10 +370,13 @@ describe("AutonomyManager (M4)", () => {
 
     host!.respondToTicks = false; // hold one tick open
     core.advance(core.physics.fixedDt);
+    const sentId = () =>
+      (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0) ?? -1;
 
     for (let i = 0; i < 24; i++) {
       host!.emit({
         type: "axes",
+        id: sentId(),
         payload: { fwd: i * 0.01, strafe: 0, turn: 0 },
       } as unknown);
       if (i < 23) {
@@ -367,7 +384,7 @@ describe("AutonomyManager (M4)", () => {
       }
     }
     expect(manager.status(0).status).toBe("running");
-    host!.emit({ type: "axes", payload: { fwd: 0.99, strafe: 0, turn: 0 } } as unknown);
+    host!.emit({ type: "axes", id: 1, payload: { fwd: 0.99, strafe: 0, turn: 0 } } as unknown);
     expect(manager.status(0).status).toBe("killed");
     expect(manager.status(0).detail).toContain("command spam limit exceeded");
     manager.dispose();
@@ -394,14 +411,24 @@ describe("AutonomyManager (M4)", () => {
     // Hold one tick open so commands have an outstanding tick to belong to.
     host!.respondToTicks = false;
     core.advance(core.physics.fixedDt);
+    const sentId = () =>
+      (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0) ?? -1;
 
     for (let i = 0; i < 24; i++) {
-      host!.emit({ type: "log", message: `noise ${i}` } as unknown); // must not consume budget
+      host!.emit({ type: "log", id: sentId(), message: `noise ${i}` });
       host!.emit({
         type: "axes",
+        id: sentId(),
         payload: { fwd: i * 0.01, strafe: 0, turn: 0 },
-      } as unknown);
-      expect(manager.status(0).status, `killed at command ${i + 1}`).not.toBe("killed");
+      });
+      const st = manager.status(0);
+      if (st.status === "killed") {
+        console.log("DBG kill detail:", st.detail,
+          "sent:", (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0),
+          "hostLast:", host!.lastTickId,
+          "outstanding:", (manager as unknown as { awaitingTick: Map<number, boolean> }).awaitingTick.get(0));
+      }
+      expect(st.status, `killed at command ${i + 1}`).not.toBe("killed");
     }
 
     // mandatory done after the 24th command — must be accepted, not counted
@@ -410,7 +437,7 @@ describe("AutonomyManager (M4)", () => {
 
     // fresh budget on the next outstanding tick: one command is fine again
     core.advance(core.physics.fixedDt);
-    host!.emit({ type: "axes", payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
+    host!.emit({ type: "axes", id: sentId(), payload: { fwd: 0.5, strafe: 0, turn: 0 } });
     expect(manager.status(0).status).toBe("running");
     manager.dispose();
   });
@@ -436,9 +463,12 @@ describe("AutonomyManager (M4)", () => {
     host!.respondToTicks = false;
     core.advance(core.physics.fixedDt);
 
+    const sid = () =>
+      (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0) ?? -1;
     for (let i = 0; i < 24; i++) {
       host!.emit({
         type: "axes",
+        id: sid(),
         payload: { fwd: i * 0.01, strafe: 0, turn: 0 },
       } as unknown);
     }
@@ -446,6 +476,7 @@ describe("AutonomyManager (M4)", () => {
 
     host!.emit({
       type: "axes",
+      id: sid(),
       payload: { fwd: 0.99, strafe: 0, turn: 0 },
     } as unknown);
     expect(manager.status(0).status).toBe("killed");
@@ -475,15 +506,15 @@ describe("AutonomyManager (M4)", () => {
     core.advance(core.physics.fixedDt);
 
     // one command inside the window is fine…
-    host!.emit({ type: "axes", payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
+    host!.emit({ type: "axes", id: host!.lastTickId ?? 1, payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
     expect(manager.status(0).status).toBe("running");
 
     // …but once done closes the tick, another command violates the protocol
     host!.finishLastTick();
     expect(manager.status(0).status).toBe("running");
-    host!.emit({ type: "axes", payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
+    host!.emit({ type: "axes", id: host!.lastTickId ?? 1, payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
     expect(manager.status(0).status).toBe("killed");
-    expect(manager.status(0).detail).toContain("without outstanding tick");
+    expect(manager.status(0).detail).toContain("message without outstanding tick");
     manager.dispose();
   });
 
