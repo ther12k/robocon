@@ -453,6 +453,40 @@ describe("AutonomyManager (M4)", () => {
     manager.dispose();
   });
 
+  it("treats a command arriving after done as a protocol violation", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    let host: FakeHost | null = null;
+    const manager = new AutonomyManager(core, (code) => {
+      const inner = new FakeHost(code);
+      host = inner;
+      return {
+        post: (m) => inner.post(m),
+        terminate: () => inner.terminate(),
+        onMessage: inner.onMessage.bind(inner),
+      };
+    });
+    manager.attach(0, 'function onTick(sense, api) {}');
+    await Promise.resolve();
+
+    host!.respondToTicks = false; // hold one tick open
+    core.advance(core.physics.fixedDt);
+
+    // one command inside the window is fine…
+    host!.emit({ type: "axes", payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
+    expect(manager.status(0).status).toBe("running");
+
+    // …but once done closes the tick, another command violates the protocol
+    host!.finishLastTick();
+    expect(manager.status(0).status).toBe("running");
+    host!.emit({ type: "axes", payload: { fwd: 0.5, strafe: 0, turn: 0 } } as unknown);
+    expect(manager.status(0).status).toBe("killed");
+    expect(manager.status(0).detail).toContain("without outstanding tick");
+    manager.dispose();
+  });
+
   it("does not kill a healthy idle worker after the stall limit with no outstanding tick", async () => {
     vi.useFakeTimers();
     const core = new SimulationCore(arena, ruleset, profile);
