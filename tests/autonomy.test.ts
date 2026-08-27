@@ -119,11 +119,14 @@ class FakeHost implements ScriptHost {
     if (msg.type === "tick" && msg.sense) {
       this.lastTickId = msg.id ?? 0;
       try {
-        this.userTick?.(msg.sense, this.api);
+        const result = this.userTick?.(msg.sense, this.api);
+        if (result && typeof (result as { then?: unknown }).then === "function") {
+          this.handler?.({ type: "error", id: msg.id ?? 0, message: "onTick must be synchronous" });
+          return;
+        }
+        this.handler?.({ type: "done", id: msg.id ?? 0 });
       } catch (err) {
         this.handler?.({ type: "error", id: msg.id ?? 0, message: String(err) });
-      } finally {
-        this.handler?.({ type: "done", id: msg.id ?? 0 });
       }
     }
   }
@@ -421,14 +424,7 @@ describe("AutonomyManager (M4)", () => {
         id: sentId(),
         payload: { fwd: i * 0.01, strafe: 0, turn: 0 },
       });
-      const st = manager.status(0);
-      if (st.status === "killed") {
-        console.log("DBG kill detail:", st.detail,
-          "sent:", (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0),
-          "hostLast:", host!.lastTickId,
-          "outstanding:", (manager as unknown as { awaitingTick: Map<number, boolean> }).awaitingTick.get(0));
-      }
-      expect(st.status, `killed at command ${i + 1}`).not.toBe("killed");
+      expect(manager.status(0).status, `killed at command ${i + 1}`).not.toBe("killed");
     }
 
     // mandatory done after the 24th command — must be accepted, not counted
@@ -548,6 +544,98 @@ describe("AutonomyManager (M4)", () => {
     for (let i = 0; i < 60; i++) match.advance(core.physics.fixedDt);
     expect(match.phase).not.toBe("playing");
     expect(body.translation().z).toBeCloseTo(zBefore, 3);
+    manager.dispose();
+  });
+
+  it("rejects commands carrying a stale tick id when a new tick is open", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    let host: FakeHost | null = null;
+    const manager = new AutonomyManager(core, (code) => {
+      const inner = new FakeHost(code);
+      host = inner;
+      return {
+        post: (m) => inner.post(m),
+        terminate: () => inner.terminate(),
+        onMessage: inner.onMessage.bind(inner),
+      };
+    });
+    manager.attach(0, "function onTick(sense, api) {}");
+    await Promise.resolve();
+
+    // Step 1: Open tick 1, send a command and finish with done
+    host!.respondToTicks = false;
+    core.advance(core.physics.fixedDt);
+    const tick1Id = (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0)!;
+    expect(tick1Id).toBeGreaterThan(0);
+    host!.emit({ type: "axes", id: tick1Id, payload: { fwd: 0.5, strafe: 0, turn: 0 } });
+    host!.finishLastTick();
+    expect(manager.status(0).status).toBe("running");
+
+    // Step 2: Open tick 2 (new tick id)
+    core.advance(core.physics.fixedDt);
+    const tick2Id = (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0)!;
+    expect(tick2Id).toBeGreaterThan(tick1Id);
+
+    // Step 3: Worker emits a late/delayed command carrying the old tick 1 id
+    host!.emit({ type: "axes", id: tick1Id, payload: { fwd: 0.8, strafe: 0, turn: 0 } });
+    expect(manager.status(0).status).toBe("killed");
+    expect(manager.status(0).detail).toContain("protocol violation: stale or unknown tick id");
+    manager.dispose();
+  });
+
+  it("rejects async onTick returning a Promise with strict synchronous contract", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    const manager = new AutonomyManager(core, (code) => new FakeHost(code));
+    manager.attach(0, "async function onTick(sense, api) { await Promise.resolve(); }");
+    await Promise.resolve();
+
+    core.advance(core.physics.fixedDt);
+    expect(manager.status(0).status).toBe("killed");
+    expect(manager.status(0).detail).toContain("onTick must be synchronous");
+    manager.dispose();
+  });
+
+  it("discards in-flight worker responses across world session reset", async () => {
+    vi.useRealTimers();
+    const core = new SimulationCore(arena, ruleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+
+    let host: FakeHost | null = null;
+    const manager = new AutonomyManager(core, (code) => {
+      const inner = new FakeHost(code);
+      host = inner;
+      return {
+        post: (m) => inner.post(m),
+        terminate: () => inner.terminate(),
+        onMessage: inner.onMessage.bind(inner),
+      };
+    });
+    manager.attach(0, "function onTick(sense, api) {}");
+    await Promise.resolve();
+
+    // hold tick in session 1
+    host!.respondToTicks = false;
+    core.advance(core.physics.fixedDt);
+    const oldTickId = (manager as unknown as { lastSentTickId: Map<number, number> }).lastSentTickId.get(0)!;
+
+    // reset simulation session
+    core.resetForReplay();
+    expect(core.currentSessionId).toBeGreaterThan(1);
+
+    // worker sends command for old session
+    host!.emit({ type: "axes", id: oldTickId, payload: { fwd: 1, strafe: 0, turn: 0 } });
+    expect(manager.status(0).status).toBe("running"); // not corrupted or killed by stale session msg
+
+    // fresh advance pumps session 2 with fresh tick id
+    host!.respondToTicks = true;
+    core.advance(core.physics.fixedDt);
+    expect(manager.status(0).status).toBe("running");
     manager.dispose();
   });
 });

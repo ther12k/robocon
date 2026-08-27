@@ -100,6 +100,7 @@ export class CommandBus {
   resetQueue(): void {
     this.queue = [];
     this.lastDeliveredAxes.clear();
+    this.currentTick = 0;
   }
 
   get tick(): number {

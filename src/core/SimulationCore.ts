@@ -480,6 +480,7 @@ export class SimulationCore {
     this.replayError = null;
     this.tick = 0;
     this.bus.resetQueue();
+    this.bus.setTick(0);
   }
 
   startReplayPlayback(file: ReplayFile): ReplayCompatibilityIssue[] {
@@ -517,6 +518,10 @@ export class SimulationCore {
     this.replayCmds = null;
     this.replayVerify = null;
     this.setInputLock("replay", false);
+  }
+
+  get currentSessionId(): number {
+    return this.sessionId;
   }
 
   isReplayPlaybackActive(): boolean {

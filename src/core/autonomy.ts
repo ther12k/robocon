@@ -71,11 +71,13 @@ export class AutonomyManager {
   private watchdogPaused = false;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private sensorOpts: SensorOptions;
+  private lastSessionId = 0;
 
   constructor(core: SimulationCore, factory: HostFactory, sensorOpts: SensorOptions = {}) {
     this.core = core;
     this.factory = factory;
     this.sensorOpts = sensorOpts;
+    this.lastSessionId = this.core.currentSessionId;
     this.core.addPostStepListener(() => this.pump());
     if (typeof setInterval !== "undefined") {
       this.watchdogTimer = setInterval(() => this.checkStalls(), WATCHDOG_INTERVAL_MS);
@@ -125,12 +127,14 @@ export class AutonomyManager {
   }
 
   private handleMessage(boundSlot: number, msg: unknown): void {
+    if (this.core.currentSessionId !== this.lastSessionId) {
+      return;
+    }
     if (typeof msg !== "object" || msg === null || typeof (msg as { type?: unknown }).type !== "string") {
       this.kill(boundSlot, "protocol violation: malformed message");
       return;
     }
     const m = msg as WorkerOut;
-    console.log("HM", boundSlot, m.type, "id", (m as {id?:unknown}).id, "expected", this.lastSentTickId.get(boundSlot));
     // Every post-ready message must carry the id of the outstanding tick.
     if (m.type !== "ready") {
       if (m.id !== this.lastSentTickId.get(boundSlot)) {
@@ -255,6 +259,13 @@ export class AutonomyManager {
   }
 
   private pump(): void {
+    if (this.core.currentSessionId !== this.lastSessionId) {
+      this.lastSessionId = this.core.currentSessionId;
+      this.awaitingTick.clear();
+      this.lastSentTickId.clear();
+      this.deadlines.clear();
+      this.msgCount.clear();
+    }
     for (const [slot, host] of this.hosts) {
       // One-in-flight backpressure: never queue a new tick while the previous
       // one is still being processed. The latest sensor frame is coalesced —
