@@ -135,4 +135,32 @@ describe("replay runtime parser", () => {
     const r2 = parseReplayFile(file);
     expect(r2.ok).toBe(false);
   });
+
+  it("rejects oversized command streams immediately without unbounded iteration", () => {
+    const file = sampleFile();
+    file.commands = Array.from({ length: 200_001 }, () => ({
+      tick: 0,
+      action: { kind: "grabToggle", slot: 0 },
+    }));
+    const r = parseReplayFile(file);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors).toHaveLength(1);
+      expect(r.errors[0]).toContain("too many commands (200001, limit 200000)");
+    }
+  });
+
+  it("strictly caps parser validation errors at MAX_VALIDATION_ERRORS (100)", () => {
+    const file = sampleFile();
+    // 300 malformed commands with multiple errors each
+    file.commands = Array.from({ length: 300 }, () => ({
+      tick: 999999,
+      action: { kind: "axes", slot: 99, payload: { fwd: 50, strafe: 50, turn: 50, extra: true } },
+    } as unknown as (typeof file.commands)[0]));
+    const r = parseReplayFile(file);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.length).toBe(100);
+    }
+  });
 });

@@ -103,6 +103,13 @@ function isValidAction(action: unknown, totalTicks: number): string[] {
 /** Strict runtime validation for untrusted replay data. */
 export function parseReplayFile(data: unknown): ParseResult {
   const errors: string[] = [];
+  const addError = (msg: string): boolean => {
+    if (errors.length < MAX_VALIDATION_ERRORS) {
+      errors.push(msg);
+    }
+    return errors.length < MAX_VALIDATION_ERRORS;
+  };
+
   if (typeof data !== "object" || data === null) {
     return { ok: false, errors: ["replay must be a JSON object"] };
   }
@@ -115,15 +122,19 @@ export function parseReplayFile(data: unknown): ParseResult {
   ];
   const keys = Object.keys(f).sort();
   for (const k of keys) {
-    if (!allowed.includes(k)) errors.push(`unknown field: ${k}`);
+    if (!allowed.includes(k)) {
+      if (!addError(`unknown field: ${k}`)) break;
+    }
   }
   for (const k of ["schemaVersion", "engineVersion", "physicsVersion", "buildId", "wasmHash", "fixedDt", "configHashes", "initialStateHash", "checkpointIntervalTicks", "checkpoints", "totalTicks", "finalStateHash", "commands"]) {
-    if (!(k in f)) errors.push(`missing field: ${k}`);
+    if (!(k in f)) {
+      if (!addError(`missing field: ${k}`)) break;
+    }
   }
   if (errors.length > 0) return { ok: false, errors };
 
   if ((f as { schemaVersion: unknown }).schemaVersion !== REPLAY_SCHEMA_VERSION) {
-    errors.push(
+    addError(
       `schemaVersion ${String((f as { schemaVersion: unknown }).schemaVersion)} != supported ${REPLAY_SCHEMA_VERSION}`,
     );
     return { ok: false, errors };
@@ -131,38 +142,42 @@ export function parseReplayFile(data: unknown): ParseResult {
   for (const k of ["engineVersion", "physicsVersion", "buildId"] as const) {
     const v = f[k];
     if (typeof v !== "string" || v.length === 0 || v.length > MAX_LABEL_LEN) {
-      errors.push(`${k} must be a non-empty string up to ${MAX_LABEL_LEN} chars`);
+      if (!addError(`${k} must be a non-empty string up to ${MAX_LABEL_LEN} chars`)) break;
     }
   }
-  if (!isHexHash(f.wasmHash, 12)) errors.push("wasmHash must be a 12-char hex string");
-  if (!isFiniteIn(f.fixedDt, 1e-6, 1)) errors.push("fixedDt must be a finite number in (0,1]");
+  if (!isHexHash(f.wasmHash, 12)) addError("wasmHash must be a 12-char hex string");
+  if (!isFiniteIn(f.fixedDt, 1e-6, 1)) addError("fixedDt must be a finite number in (0,1]");
   if (
     typeof f.configHashes !== "object" || f.configHashes === null ||
     Array.isArray(f.configHashes)
   ) {
-    errors.push("configHashes must be an object");
+    addError("configHashes must be an object");
   } else {
     const entries = Object.entries(f.configHashes as Record<string, unknown>);
-    if (entries.length > 16) errors.push("configHashes has too many entries");
+    if (entries.length > 16) addError("configHashes has too many entries");
     for (const [k, v] of entries) {
-      if (k.length > 32 || !/^[a-zA-Z]+$/.test(k)) errors.push(`configHashes key invalid: ${k}`);
-      if (!isHexHash(v, 8)) errors.push(`configHashes.${k} must be an 8-char lowercase hex hash`);
+      if (k.length > 32 || !/^[a-zA-Z]+$/.test(k)) {
+        if (!addError(`configHashes key invalid: ${k}`)) break;
+      }
+      if (!isHexHash(v, 8)) {
+        if (!addError(`configHashes.${k} must be an 8-char lowercase hex hash`)) break;
+      }
     }
   }
-  if (!isHexHash(f.initialStateHash)) errors.push("initialStateHash must be an 8-char hex string");
-  if (!isHexHash(f.finalStateHash)) errors.push("finalStateHash must be an 8-char hex string");
+  if (!isHexHash(f.initialStateHash)) addError("initialStateHash must be an 8-char hex string");
+  if (!isHexHash(f.finalStateHash)) addError("finalStateHash must be an 8-char hex string");
   if (!isIntInRange(f.checkpointIntervalTicks, 1, 60000)) {
-    errors.push("checkpointIntervalTicks must be an integer in [1,60000]");
+    addError("checkpointIntervalTicks must be an integer in [1,60000]");
   }
   if (!isIntInRange(f.totalTicks, 1, MAX_TOTAL_TICKS)) {
-    errors.push(`totalTicks must be an integer in [1,${MAX_TOTAL_TICKS}]`);
+    addError(`totalTicks must be an integer in [1,${MAX_TOTAL_TICKS}]`);
   }
   if (errors.length > 0) return { ok: false, errors };
   const totalTicks = f.totalTicks as number;
   const interval = f.checkpointIntervalTicks as number;
 
   if (!Array.isArray(f.checkpoints)) {
-    errors.push("checkpoints must be an array");
+    addError("checkpoints must be an array");
   } else {
     const allowedCheckpoints = Math.min(MAX_CHECKPOINTS, Math.ceil(totalTicks / interval) + 2);
     if (f.checkpoints.length > allowedCheckpoints) {
@@ -175,35 +190,51 @@ export function parseReplayFile(data: unknown): ParseResult {
     for (const cp of f.checkpoints as unknown[]) {
       if (errors.length >= MAX_VALIDATION_ERRORS) break;
       if (typeof cp !== "object" || cp === null) {
-        errors.push("checkpoint must be an object");
+        if (!addError("checkpoint must be an object")) break;
         continue;
       }
       const c = cp as Record<string, unknown>;
-      if (Object.keys(c).sort().join(",") !== "hash,tick") errors.push("checkpoint has unexpected keys");
-      if (!isIntInRange(c.tick, 0, totalTicks - 1)) errors.push(`checkpoint tick out of range: ${String(c.tick)}`);
-      if (!isHexHash(c.hash)) errors.push("checkpoint hash must be an 8-char hex string");
+      if (Object.keys(c).sort().join(",") !== "hash,tick") {
+        if (!addError("checkpoint has unexpected keys")) break;
+      }
+      if (!isIntInRange(c.tick, 0, totalTicks - 1)) {
+        if (!addError(`checkpoint tick out of range: ${String(c.tick)}`)) break;
+      }
+      if (!isHexHash(c.hash)) {
+        if (!addError("checkpoint hash must be an 8-char hex string")) break;
+      }
     }
   }
   if (!Array.isArray(f.commands)) {
-    errors.push("commands must be an array");
+    addError("commands must be an array");
   } else {
-    if (f.commands.length > MAX_COMMANDS) errors.push("too many commands");
-    for (let i = 0; i < Math.min(f.commands.length, MAX_COMMANDS); i++) {
+    if (f.commands.length > MAX_COMMANDS) {
+      return {
+        ok: false,
+        errors: [`too many commands (${f.commands.length}, limit ${MAX_COMMANDS})`],
+      };
+    }
+    for (let i = 0; i < f.commands.length; i++) {
+      if (errors.length >= MAX_VALIDATION_ERRORS) break;
       const c = f.commands[i] as unknown;
       if (typeof c !== "object" || c === null) {
-        errors.push(`command #${i} must be an object`);
+        if (!addError(`command #${i} must be an object`)) break;
         continue;
       }
       const cmd = c as Record<string, unknown>;
-      if (Object.keys(cmd).sort().join(",") !== "action,tick") errors.push(`command #${i} has unexpected keys`);
-      if (!isIntInRange(cmd.tick, 0, totalTicks - 1)) {
-        errors.push(`command #${i} tick out of range: ${String(cmd.tick)} (totalTicks ${totalTicks})`);
+      if (Object.keys(cmd).sort().join(",") !== "action,tick") {
+        if (!addError(`command #${i} has unexpected keys`)) break;
       }
-      errors.push(...isValidAction(cmd.action, totalTicks).map((e) => `command #${i}: ${e}`));
+      if (!isIntInRange(cmd.tick, 0, totalTicks - 1)) {
+        if (!addError(`command #${i} tick out of range: ${String(cmd.tick)} (totalTicks ${totalTicks})`)) break;
+      }
+      for (const err of isValidAction(cmd.action, totalTicks)) {
+        if (!addError(`command #${i}: ${err}`)) break;
+      }
     }
   }
   if ("matchStarted" in f && typeof f.matchStarted !== "boolean") {
-    errors.push("matchStarted must be a boolean");
+    addError("matchStarted must be a boolean");
   }
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, file: data as unknown as ReplayFile };
