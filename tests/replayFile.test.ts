@@ -362,4 +362,80 @@ describe("versioned replay files (R1-06)", () => {
     expect(futureIssues.length).toBe(1);
     expect(futureIssues[0].field).toBe("schemaVersion");
   });
+
+  it("allows compatible instant replay playback after a match has ended", async () => {
+    await RAPIER.init();
+    const competition = {
+      ...testCompetition,
+      match: { setupSec: 0.05, countdownSec: 0.05, playSec: 0.2, retriesPerTeam: 1 },
+    };
+    const core = new SimulationCore(testArena, competition, testProfile);
+    core.addRobot(0, diffSpec);
+    const match = new MatchController(core, competition);
+    match.startMatch();
+
+    // play match until ended
+    let guard = 0;
+    while (match.phase !== "ended" && guard++ < 300) {
+      match.advance(core.physics.fixedDt);
+    }
+    expect(match.phase).toBe("ended");
+
+    // record a compatible replay from a clean baseline using the same configuration
+    const recCore = new SimulationCore(testArena, competition, testProfile);
+    recCore.addRobot(0, diffSpec);
+    recCore.beginReplayCapture(CHECKPOINT_EVERY);
+    for (const step of script) {
+      if (step.axes) recCore.setAxesFromInput(0, step.axes);
+      if (step.grabToggle) recCore.enqueueGrabToggle(0);
+      recCore.advance(recCore.physics.fixedDt);
+    }
+    const replay = recCore.endReplayCapture();
+
+    // pre-validate replay against pristine state
+    const issues = core.validateReplay(replay);
+    expect(issues).toEqual([]);
+
+    // simulate prepareMatchForReplay logic: reset ended match to idle
+    if (match.phase === "ended") {
+      match.resetMatchToIdle();
+    }
+    expect(match.phase).toBe("idle");
+
+    const playbackIssues = core.startReplayPlayback(replay);
+    expect(playbackIssues).toEqual([]);
+    expect(core.isReplayPlaybackActive()).toBe(true);
+
+    guard = 0;
+    while (core.isReplayPlaybackActive() && guard++ < replay.totalTicks * 3) {
+      core.advance(replay.fixedDt);
+    }
+    expect(core.wasReplayPlaybackCompleted()).toBe(true);
+    expect(core.replayDesync).toBeNull();
+    expect(core.stateHash()).toBe(replay.finalStateHash);
+  });
+
+  it("neutralizes actuators when replay playback is stopped", async () => {
+    await RAPIER.init();
+    const replay = recordToFile();
+    const core = newCore();
+    expect(core.startReplayPlayback(replay)).toEqual([]);
+
+    // step until robot is moving
+    for (let i = 0; i < 15; i++) {
+      core.advance(replay.fixedDt);
+    }
+    const velMid = core.getBody(0)!.linvel();
+    expect(Math.hypot(velMid.x, velMid.z)).toBeGreaterThan(0.1);
+
+    // stop and neutralize (as finishPlayback does)
+    core.stopReplayPlayback();
+    core.neutralizeActuators();
+
+    expect(core.isReplayPlaybackActive()).toBe(false);
+    const velStopped = core.getBody(0)!.linvel();
+    expect(velStopped.x).toBe(0);
+    expect(velStopped.y).toBe(0);
+    expect(velStopped.z).toBe(0);
+  });
 });

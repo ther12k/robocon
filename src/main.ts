@@ -301,6 +301,7 @@ function updateReplayButtons(): void {
   replayPlayBtn.disabled = playing || recording || !replayLoadedFile;
   replayStopBtn.disabled = !playing;
   replayLoadBtn.disabled = playing || recording;
+  replayShareBtn.disabled = playing || recording || !replayLoadedFile;
 }
 
 function requireIdleMatch(): boolean {
@@ -311,6 +312,18 @@ function requireIdleMatch(): boolean {
     return false;
   }
   return true;
+}
+
+function prepareMatchForReplay(): boolean {
+  if (!match || match.phase === "idle") return true;
+  if (match.phase === "ended") {
+    match.resetMatchToIdle();
+    return true;
+  }
+  setReplayStatus([
+    { cls: "err", text: "cannot play replay while a match is active" },
+  ]);
+  return false;
 }
 
 function startReplayRecording(): void {
@@ -374,6 +387,7 @@ function stopReplayRecording(opts: { download?: boolean } = { download: true }):
 function finishPlayback(detail: string, cls: "ok" | "warn" | "err" = "warn"): void {
   if (!core) return;
   core.stopReplayPlayback();
+  core.neutralizeActuators();
   replayUi = "idle";
   updateReplayButtons();
   setReplayStatus([{ cls, text: `replay ${detail}` }]);
@@ -414,8 +428,7 @@ function playReplay(): void {
     setReplayStatus(issues.map((i) => ({ cls: "err", text: `${i.field}: ${i.message}` })));
     return;
   }
-  if (!requireIdleMatch()) return;
-  if (match && match.phase === "ended") match.resetMatchToIdle(); // allow instant replay after a match
+  if (!prepareMatchForReplay()) return;
   if (replayLoadedFile.matchStarted && !match) {
     setReplayStatus([{ cls: "err", text: "this replay needs a match session — match controller unavailable" }]);
     return;

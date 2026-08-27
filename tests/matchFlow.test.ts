@@ -292,4 +292,51 @@ describe("MatchController phases (M3)", () => {
     expect(match.winner).toBe("red");
     expect(match.score.red).toBeGreaterThan(0);
   });
+
+  it("neutralizes actuators and freezes robot velocities after final whistle", async () => {
+    await RAPIER.init();
+    const shortRuleset: CompetitionRuleset = {
+      ...ruleset,
+      match: { setupSec: 0.05, countdownSec: 0.05, playSec: 0.5, retriesPerTeam: 1 },
+      scoring: [],
+      absoluteWin: undefined,
+      violations: [],
+    };
+    const core = new SimulationCore(arena, shortRuleset, profile);
+    core.addRobot(0, diffSpec satisfies RobotSpec);
+    const match = new MatchController(core, shortRuleset);
+    match.startMatch();
+    tickUntil(match, 0.12);
+    expect(match.phase).toBe("playing");
+
+    // drive aggressively during play
+    for (let i = 0; i < 20; i++) {
+      core.setAxesFromInput(0, { fwd: 1, strafe: 0.5, turn: 1 });
+      match.advance(core.physics.fixedDt);
+    }
+    const movingVel = core.getBody(0)!.linvel();
+    expect(Math.hypot(movingVel.x, movingVel.z)).toBeGreaterThan(0.2);
+
+    // play until ended (final whistle)
+    tickUntil(match, 1.0);
+    expect(match.phase).toBe("ended");
+    expect(core.inputGateEnabled).toBe(true);
+
+    const linvelAfter = core.getBody(0)!.linvel();
+    const angvelAfter = core.getBody(0)!.angvel();
+    expect(linvelAfter.x).toBeCloseTo(0, 4);
+    expect(linvelAfter.y).toBeCloseTo(0, 4);
+    expect(linvelAfter.z).toBeCloseTo(0, 4);
+    expect(angvelAfter.x).toBeCloseTo(0, 4);
+    expect(angvelAfter.y).toBeCloseTo(0, 4);
+    expect(angvelAfter.z).toBeCloseTo(0, 4);
+
+    const pEnded = core.getBody(0)!.translation();
+    // continuing to advance ticks post-whistle must never move the robot
+    for (let i = 0; i < 60; i++) {
+      match.advance(core.physics.fixedDt);
+    }
+    const pPost = core.getBody(0)!.translation();
+    expect(Math.hypot(pPost.x - pEnded.x, pPost.z - pEnded.z)).toBeLessThan(1e-4);
+  });
 });

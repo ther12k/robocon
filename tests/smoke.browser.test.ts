@@ -274,6 +274,31 @@ describe("browser smoke (R0-07)", () => {
     expect(
       await page.evaluate(() => (window as unknown as SimProbe).__sim_replayState()),
     ).toBe("recording");
+    expect(
+      await page.evaluate(() => (document.getElementById("replay-share") as HTMLButtonElement).disabled),
+    ).toBe(true);
+
+    // Spy on actual browser file download via Blob / ObjectURL / anchor click
+    await page.evaluate(() => {
+      (window as unknown as { __capturedDownloads: Array<{ filename: string; size: number }> }).__capturedDownloads = [];
+      const origCreate = URL.createObjectURL;
+      URL.createObjectURL = function (blob: Blob) {
+        const url = origCreate.call(URL, blob);
+        (window as unknown as { __capturedDownloads: Array<{ filename: string; size: number }> }).__capturedDownloads.push({
+          filename: "",
+          size: blob.size,
+        });
+        return url;
+      };
+      const origClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        const list = (window as unknown as { __capturedDownloads: Array<{ filename: string; size: number }> }).__capturedDownloads;
+        if (list && list.length > 0) {
+          list[list.length - 1].filename = this.download;
+        }
+        return origClick.call(this);
+      };
+    });
 
     const spawnPos = await page.evaluate(() => (window as unknown as SimProbe).__sim_robotPos());
 
@@ -282,20 +307,34 @@ describe("browser smoke (R0-07)", () => {
     await page.keyboard.up("KeyW");
     await new Promise((r) => setTimeout(r, 300));
 
-    const file = await page.evaluate(() => (window as unknown as SimProbe).__sim_replayStopExport());
-    expect(file).not.toBeNull();
-    expect(file!.schemaVersion).toBe(REPLAY_SCHEMA_VERSION);
-    expect(file!.commands.length).toBeGreaterThan(0);
+    // Stop recording via UI button (Stop & Export) — triggers downloadJson
+    await page.evaluate(() => {
+      if (document.getElementById("replay-panel")!.hidden) {
+        (document.getElementById("btn-replay") as HTMLButtonElement).click();
+      }
+      (document.getElementById("replay-record") as HTMLButtonElement).click();
+    });
+    await new Promise((r) => setTimeout(r, 100));
 
-    const loadResult = await page.evaluate((text) => {
-      const res = (window as unknown as SimProbe).__sim_replayLoadText(text);
-      const status = document.getElementById("replay-status")!.textContent ?? "";
-      return { ...res, status };
-    }, JSON.stringify(file));
-    if (!loadResult.ok) {
-      console.log("LOAD FAILED STATUS:", loadResult.status);
-    }
-    expect(loadResult.ok).toBe(true);
+    const downloads = await page.evaluate(
+      () => (window as unknown as { __capturedDownloads?: Array<{ filename: string; size: number }> }).__capturedDownloads ?? [],
+    );
+    expect(downloads.length).toBeGreaterThan(0);
+    expect(downloads[0].filename).toMatch(/^robocon-replay-\d+\.json$/);
+    expect(downloads[0].size).toBeGreaterThan(50);
+
+    // Share button must now be enabled
+    expect(
+      await page.evaluate(() => (document.getElementById("replay-share") as HTMLButtonElement).disabled),
+    ).toBe(false);
+
+    // Clicking share button from UI must copy or prompt share link
+    await page.click("#replay-share");
+    await new Promise((r) => setTimeout(r, 100));
+    const shareStatus = await page.evaluate(
+      () => document.getElementById("replay-status")!.textContent ?? "",
+    );
+    expect(shareStatus).toMatch(/share link copied|clipboard unavailable/);
 
     const link = await page.evaluate(
       () => (window as unknown as SimProbe).__sim_replayShareLink(),
