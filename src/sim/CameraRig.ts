@@ -73,6 +73,12 @@ export class CameraRig {
     return this.usingOrtho;
   }
 
+  setTopView(top: boolean): void {
+    if (this.usingOrtho !== top) {
+      this.toggleTopView();
+    }
+  }
+
   toggleTopView(): boolean {
     this.usingOrtho = !this.usingOrtho;
     if (this.usingOrtho) {
@@ -92,6 +98,10 @@ export class CameraRig {
 
   isFollowing(): boolean {
     return this.followId !== null;
+  }
+
+  getFollowingId(): string | null {
+    return this.followId;
   }
 
   reset(): void {

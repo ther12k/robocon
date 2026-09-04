@@ -1,3 +1,7 @@
+@import "./ui/styles/tokens.css";
+@import "./ui/styles/shell.css";
+@import "./ui/styles/components.css";
+
 :root {
   --bg: #101418;
   --panel: #161c23ee;

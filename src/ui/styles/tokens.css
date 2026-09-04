@@ -1,0 +1,58 @@
+:root {
+  /* Surfaces & Backgrounds */
+  --ui-bg: #F2F7FC;
+  --ui-surface: #FFFFFF;
+  --ui-surface-soft: #F5F8FC;
+  --ui-text: #12234B;
+  --ui-muted: #516481;
+  --ui-border: #D8E3EF;
+
+  /* Accents & Brand */
+  --ui-accent: #246BFD;
+  --ui-accent-hover: #1b57d6;
+  --ui-accent-soft: #E8F1FF;
+
+  /* Status Colors */
+  --ui-success: #087F5B;
+  --ui-success-soft: #DDF7EC;
+  --ui-warning: #8A5800;
+  --ui-warning-soft: #FFF3CD;
+  --ui-danger: #BC2539;
+  --ui-danger-soft: #FDE8EA;
+
+  /* Teams */
+  --ui-team-red: #C93645;
+  --ui-team-blue: #246BFD;
+
+  /* Radii & Shadows */
+  --ui-radius-card: 16px;
+  --ui-radius-control: 10px;
+  --ui-shadow-card: 0 6px 24px rgba(32, 65, 110, 0.06);
+  --ui-shadow-overlay: 0 12px 32px rgba(18, 35, 75, 0.12);
+
+  /* Spacing Scale */
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-6: 24px;
+  --ui-space-8: 32px;
+
+  /* Typography */
+  --ui-font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --ui-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  
+  --ui-font-size-xs: 12px;
+  --ui-line-height-xs: 18px;
+  --ui-font-size-sm: 13px;
+  --ui-line-height-sm: 18px;
+  --ui-font-size-base: 14px;
+  --ui-line-height-base: 20px;
+  --ui-font-size-md: 16px;
+  --ui-line-height-md: 22px;
+  --ui-font-size-lg: 18px;
+  --ui-line-height-lg: 24px;
+  --ui-font-size-xl: 22px;
+  --ui-line-height-xl: 28px;
+}

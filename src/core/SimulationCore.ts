@@ -249,6 +249,26 @@ export class SimulationCore {
     return this.slots.get(slot)?.spec;
   }
 
+  getGripper(slot: number): GripperController | null {
+    return this.slots.get(slot)?.gripper ?? null;
+  }
+
+  respawnRobot(slotIndex: number): boolean {
+    const slot = this.slots.get(slotIndex);
+    if (!slot) return false;
+    slot.gripper?.release(slot.body.linvel());
+    const q = quatFromEulerYXZ(0, slot.spawn.yaw, 0);
+    slot.body.setTranslation(
+      { x: slot.spawn.x, y: (slot.spec.chassis.height ?? 0.3) / 2 + 0.02, z: slot.spawn.z },
+      true,
+    );
+    slot.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+    slot.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    slot.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    slot.axes = { fwd: 0, strafe: 0, turn: 0 };
+    return true;
+  }
+
   activeSlots(): number[] {
     return [...this.slots.keys()].sort((a, b) => a - b);
   }

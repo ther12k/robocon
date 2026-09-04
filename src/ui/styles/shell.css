@@ -1,0 +1,167 @@
+@import "./tokens.css";
+
+/* App Container */
+#app.light-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  width: 100vw;
+  background-color: var(--ui-bg);
+  color: var(--ui-text);
+  font-family: var(--ui-font-family);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Header */
+.app-header {
+  height: 64px;
+  background-color: var(--ui-surface);
+  border-bottom: 1px solid var(--ui-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--ui-space-4);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  font-size: var(--ui-font-size-md);
+  font-weight: 700;
+  color: var(--ui-text);
+  text-decoration: none;
+}
+
+.header-brand svg {
+  width: 28px;
+  height: 28px;
+  color: var(--ui-accent);
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.nav-link-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ui-muted);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: var(--ui-radius-control);
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+}
+
+.nav-link-btn:hover {
+  color: var(--ui-text);
+  background-color: var(--ui-surface-soft);
+}
+
+.nav-link-btn.active {
+  color: var(--ui-accent);
+  background-color: var(--ui-accent-soft);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+}
+
+/* Match Banner / Score Strip */
+.match-strip {
+  background: var(--ui-surface);
+  border-bottom: 1px solid var(--ui-border);
+  padding: var(--ui-space-2) var(--ui-space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-6);
+  font-weight: 600;
+}
+
+.score-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: var(--ui-font-size-sm);
+}
+
+.score-badge.red {
+  background: #FDE8EA;
+  color: var(--ui-team-red);
+}
+
+.score-badge.blue {
+  background: var(--ui-accent-soft);
+  color: var(--ui-team-blue);
+}
+
+/* Workspace Layout */
+.workspace-container {
+  flex: 1;
+  padding: var(--ui-space-4);
+  max-width: 1920px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(290px, 1fr) minmax(560px, 2.1fr) minmax(290px, 1fr);
+  gap: var(--ui-space-4);
+  align-items: start;
+}
+
+.workspace-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-4);
+  min-width: 0;
+}
+
+/* Cards Base */
+.ui-card {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-card);
+  box-shadow: var(--ui-shadow-card);
+  padding: var(--ui-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+}
+
+.card-title {
+  margin: 0;
+  font-size: var(--ui-font-size-md);
+  font-weight: 700;
+  color: var(--ui-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Footer / Statusbar */
+.app-statusbar {
+  height: 36px;
+  background: var(--ui-surface);
+  border-top: 1px solid var(--ui-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--ui-space-4);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-muted);
+}
